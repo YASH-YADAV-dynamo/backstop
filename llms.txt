@@ -1,0 +1,64 @@
+# Backstop
+
+> Backstop pulls your money from any chain to save your loan before it gets liquidated.
+> Hackathon prototype, unaudited, NEAR + Base mainnet with tiny amounts; not yet run on mainnet.
+
+What it is: each user has a keyless NEAR policy contract (a vault) holding rescue USDC. Operators make
+vaults today; a keyless vault factory that lets users create their own is in progress, not deployed. Users fund a vault from a
+NEAR wallet or from any chain 1Click supports (a NEAR Intents 1Click deposit address that delivers
+NEAR USDC to the policy). An agent watches the user's Aave v3 loan on Base (at the user's own EVM
+address). When the health factor falls below the trigger, the agent asks the policy to pay a
+1Click quote; the policy verifies 1Click's ed25519 signature and that the quote sends Base USDC to
+the policy's own Chain-Signatures-derived Base address and refunds to the policy. Then the policy
+builds repay(USDC, amount, 2, borrower) to the Aave Pool, has v1.signer sign it, and the agent
+broadcasts. Limits on-chain: pause, max per rescue, UTC-day cap (rescues and bridges separately),
+cooldowns, fee and gas caps, approve at most hourly. Users never share keys; every user action is a
+wallet-approved transaction. A vault's agent is a NEAR account, not a key on the vault: the planned
+bot account (one full-access key, in the operator's secret store, holding about 2 NEAR) is the agent of
+every factory vault. Each vault accepts only rescue, fund_bridge and approve_pool from its agent, within its
+own limits. A bot compromise is bounded per vault, and the bounds add up across vaults until each owner
+pauses or changes the agent. Aurora Intents Connect was evaluated and not used (no NEAR destination yet).
+
+Status: contract v2 (151 unit tests), vault factory (in progress: 34 host tests, not deployed), packages,
+agent (tested with fakes), multi-vault bot (in progress), web (/app, /dashboard, /docs) and operator scripts
+built. Internal security review of the policy: no Critical/High; the factory and bot are not reviewed.
+Mainnet rehearsal pending; no tx links yet.
+
+## Code
+- contracts/policy/src/lib.rs: policy contract (init/activate, owner methods, deposits, fund_bridge, rescue, approve_pool, callbacks, views)
+- contracts/policy/src/bridge.rs: 1Click signed-quote verification and routing checks
+- contracts/policy/src/limits.rs: limit checks, UTC-day budgets
+- contracts/policy/src/evm.rs: repay/approve calldata, EIP-1559 tx, MPC signature parsing, low-s, ecrecover
+- contracts/policy/src/tests.rs: contract unit tests, named after the claim they prove
+- contracts/factory/src: keyless vault factory (in progress, not deployed): create_policy, counter names, refunds; tests.rs
+- packages/core/src/risk.ts: pure risk engine (repayNeeded, decideRescue)
+- packages/adapters/lending-aave/src: Aave v3 reads and calldata
+- packages/mover/src: 1Click quotes, signed-quote verification, status (zod-validated)
+- packages/signer/src: Chain Signatures derivation (chainsig.js + v1.signer view)
+- packages/chains/src: Base (viem) and NEAR (near-api-js) with RPC failover
+- packages/receipts/src: NEAR AI Cloud receipts with template fallback
+- packages/db/src: rescue record store (JSON file or Postgres)
+- apps/agent/src: worker (cli.ts, rescue.ts, checks.ts, policy.ts, deps.ts)
+- apps/web: Next.js site; app/app (wallet flow), app/api/fund (any-chain deposit quotes + status), app/dashboard, app/docs
+- scripts/src: operator scripts (deploy-policy incl. --rehearsal/--redeploy/--finalize, policy status/print, derive, aave-setup status)
+
+## Run
+- pnpm install; cp .env.example .env; pnpm test
+- pnpm contract:test; pnpm contract:build; pnpm factory:test
+- pnpm --filter @backstop/web dev
+- pnpm demo --dry-run | pnpm demo | pnpm demo --trigger 3.0 | pnpm --filter @backstop/agent start (watch)
+- pnpm --filter @backstop/scripts deploy-policy --name <n> --owner <a.near> --borrower 0x.. [--rehearsal] [--send]
+
+## Docs
+- README.md
+- docs/ARCHITECTURE.md
+- docs/SECURITY.md: keys, worst cases, review findings, residual risks
+- docs/JUDGES.md: claim -> code -> test -> tx
+- docs/litepaper.md
+- contracts/policy/README.md: methods, errors, build, deploy
+- docs/site/: website docs pages (01-overview ... 08-roadmap)
+
+## Proof
+- Tx links: pending the mainnet rehearsal.
+- Offline: a recorded live signed 1Click quote passes the contract checks, the 1Click SDK and an
+  independent verifier (contracts/policy/tests/fixtures/quote.json).

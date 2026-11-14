@@ -1,0 +1,9 @@
+{
+  "name": "@backstop/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./registry": "./src/registry.ts" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@bgd-labs/aave-address-book": "4.44.22", "zod": "^3.25.0", "dotenv": "^16.5.0" }
+}

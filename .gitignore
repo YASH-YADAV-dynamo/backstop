@@ -1,0 +1,35 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+**/credentials/
+
+# deps / build
+node_modules/
+.turbo/
+.next/
+dist/
+out/
+target/
+*.wasm
+!contracts/policy/res/.gitkeep
+
+# runtime data
+rescues.json
+*.log
+.DS_Store
+coverage/
+
+# internal working notes / AI-assistant files (not part of the public repo)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/
+
+# internal knowledge base / working notes (design log, agent hand-offs). The public docs are
+# README.md, docs/SECURITY.md, docs/JUDGES.md, docs/ARCHITECTURE.md, docs/litepaper.md, docs/site/.
+docs/design/
+docs/INTERFACES.md
+docs/contract-notes.md

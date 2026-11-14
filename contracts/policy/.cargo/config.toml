@@ -1,0 +1,5 @@
+[target.wasm32-unknown-unknown]
+# `--cfg near` is near-sdk 5.30's on-chain build mode: host functions for sha256/keccak256 and
+# panic_utf8 (ERR_* messages reach callers). Without it near-sdk uses pure-Rust fallbacks
+# "not for on-chain use" and every panic is a bare trap.
+rustflags = ["--cfg", "near", "-C", "link-arg=-s"]

@@ -1,0 +1,23 @@
+{
+  "name": "@backstop/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "derive": "tsx src/derive.ts",
+    "aave-setup": "tsx src/aave-setup.ts",
+    "deploy-policy": "tsx src/deploy-policy.ts",
+    "deploy-factory": "tsx src/deploy-factory.ts",
+    "policy": "tsx src/policy-admin.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@backstop/config": "workspace:*",
+    "@backstop/chains": "workspace:*",
+    "@backstop/signer": "workspace:*",
+    "@backstop/lending-aave": "workspace:*",
+    "viem": "^2.57.18",
+    "near-api-js": "^7.5.3"
+  }
+}

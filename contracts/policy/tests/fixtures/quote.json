@@ -1,0 +1,52 @@
+{
+  "capturedAt": "2026-11-13T06:25:41.546Z",
+  "note": "Live non-dry 1Click quote (POST /v0/quote, NEAR USDC -> Base USDC). No deposit was made. Used by contracts/policy live_1click_quote_fixture_verifies and packages/mover tests.",
+  "response": {
+    "quote": {
+      "amountIn": "5000000",
+      "amountInFormatted": "5.0",
+      "amountInUsd": "4.997710000000",
+      "minAmountIn": "5000000",
+      "amountOut": "4997011",
+      "amountOutFormatted": "4.997011",
+      "amountOutUsd": "4.994722368962",
+      "minAmountOut": "4972025",
+      "timeEstimate": 22,
+      "refundFee": "4265",
+      "withdrawFee": "2400",
+      "deadline": "2026-11-16T06:55:40.902Z",
+      "timeWhenInactive": "2026-11-16T06:55:40.902Z",
+      "depositAddress": "5c11aa2318cb48ae4c9d4fce37f7a0fad2fe970d81d621838549262483dfc184"
+    },
+    "quoteRequest": {
+      "dry": false,
+      "depositMode": "SIMPLE",
+      "swapType": "EXACT_INPUT",
+      "slippageTolerance": 50,
+      "originAsset": "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+      "depositType": "ORIGIN_CHAIN",
+      "destinationAsset": "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      "amount": "5000000",
+      "refundTo": "example.near",
+      "refundType": "ORIGIN_CHAIN",
+      "recipient": "0xEF4Ea05e5c11057DeCC8E1bd6F5369f2acD91fA5",
+      "recipientType": "DESTINATION_CHAIN",
+      "deadline": "2026-11-13T06:55:40.902Z",
+      "confidentiality": "public",
+      "quoteWaitingTimeMs": 0,
+      "insured": false,
+      "appFees": [
+        {
+          "recipient": "5880ad2b362620fadf759cbceb1cd5737ce8c6ed7fb8e9942881e6731f9247dd",
+          "fee": 1,
+          "limitOrderId": null
+        }
+      ]
+    },
+    "signature": "ed25519:5PAQ737hCfJKYtVnv4sHJYrYG9sLVJb99nAzzZ1JdPtBjv2Uk9zPZLX9E26WM17v5YZQbeCzVSz1xb2TRC5w1VZs",
+    "timestamp": "2026-11-13T06:25:41.546Z",
+    "correlationId": "bba83ae9-0831-4214-9f06-b7deb793e6c3"
+  },
+  "canonical": "{\"amount\":\"5000000\",\"amountIn\":\"5000000\",\"amountInFormatted\":\"5.0\",\"amountInUsd\":\"4.997710000000\",\"amountOut\":\"4997011\",\"amountOutFormatted\":\"4.997011\",\"amountOutUsd\":\"4.994722368962\",\"deadline\":\"2026-11-16T06:55:40.902Z\",\"depositAddress\":\"5c11aa2318cb48ae4c9d4fce37f7a0fad2fe970d81d621838549262483dfc184\",\"depositType\":\"ORIGIN_CHAIN\",\"destinationAsset\":\"nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near\",\"dry\":false,\"minAmountIn\":\"5000000\",\"minAmountOut\":\"4972025\",\"originAsset\":\"nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1\",\"recipient\":\"0xEF4Ea05e5c11057DeCC8E1bd6F5369f2acD91fA5\",\"recipientType\":\"DESTINATION_CHAIN\",\"refundFee\":\"4265\",\"refundTo\":\"example.near\",\"refundType\":\"ORIGIN_CHAIN\",\"slippageTolerance\":50,\"swapType\":\"EXACT_INPUT\",\"timeEstimate\":22,\"timeWhenInactive\":\"2026-11-16T06:55:40.902Z\",\"timestamp\":\"2026-11-13T06:25:41.546Z\",\"withdrawFee\":\"2400\"}",
+  "signature": "ed25519:5PAQ737hCfJKYtVnv4sHJYrYG9sLVJb99nAzzZ1JdPtBjv2Uk9zPZLX9E26WM17v5YZQbeCzVSz1xb2TRC5w1VZs"
+}

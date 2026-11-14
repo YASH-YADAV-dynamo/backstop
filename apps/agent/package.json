@@ -1,0 +1,25 @@
+{
+  "name": "@backstop/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/cli.ts",
+    "start": "tsx src/cli.ts --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@backstop/chains": "workspace:*",
+    "@backstop/config": "workspace:*",
+    "@backstop/core": "workspace:*",
+    "@backstop/db": "workspace:*",
+    "@backstop/lending-aave": "workspace:*",
+    "@backstop/mover": "workspace:*",
+    "@backstop/receipts": "workspace:*",
+    "@backstop/signer": "workspace:*",
+    "near-api-js": "^7.5.3",
+    "viem": "^2.57.18",
+    "zod": "^3.25.0"
+  }
+}

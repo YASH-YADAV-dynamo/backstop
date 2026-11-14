@@ -1,0 +1,328 @@
+{
+  "$comment": "Product brief for Backstop. Every capability carries a status: built (code + tests in this repo), unverified (built, not yet proven on mainnet), or future (not built). Keep in sync with README.md and docs/SECURITY.md.",
+  "name": "Backstop",
+  "one_liner": "Backstop pulls your money from any chain to save your loan before it gets liquidated.",
+  "stage": {
+    "label": "Hackathon prototype, unaudited",
+    "network": "NEAR mainnet + Base mainnet, tiny amounts",
+    "mainnet_runs_so_far": 0,
+    "tracks": [
+      "Unstoppable DeFi",
+      "AI Security & Defense",
+      "Agent Economy"
+    ]
+  },
+  "problem": {
+    "summary": "Your loan is on one chain and your spare money is on another. When collateral prices fall, the money that could save the loan is in the wrong place, and moving it by hand takes too long.",
+    "details": [
+      "On Aave v3, when a position's health factor (HF) drops below 1, liquidators repay part of the debt and take collateral plus a liquidation bonus (typically several percent of the liquidated amount, set per asset).",
+      "Crashes happen at night, on weekends and in minutes. A human has to notice, open a bridge, wait, switch chains, find gas, and repay.",
+      "Existing automation mostly works on one chain with funds that are already there, or needs a bot holding keys that can also move your money."
+    ]
+  },
+  "what_it_does": {
+    "summary": "Each user gets a keyless NEAR policy contract that holds rescue USDC and enforces the user's limits. An agent watches the user's Aave v3 loan on Base. When HF falls below the user's trigger, the policy bridges USDC to Base with NEAR Intents 1Click and repays part of the loan with a transaction it builds itself and has signed by NEAR Chain Signatures.",
+    "supported_today": {
+      "lending_protocol": "Aave v3",
+      "loan_chain": "Base",
+      "debt_asset": "USDC variable debt",
+      "funding": "NEAR USDC, or any token/chain 1Click supports (USDC/USDT on about 20 chains, other tokens by swap; 39 chains in the 1Click token list on 2026-11-13)"
+    },
+    "status": "built (unverified on mainnet)"
+  },
+  "how_it_works": {
+    "components": [
+      {
+        "name": "Policy contract",
+        "where": "NEAR, one per user, no access keys",
+        "role": "Holds rescue USDC, enforces limits, verifies 1Click quotes, builds the only two Base transactions it will sign (Aave repay for the user's address; approve of the Aave Pool for at most one day's cap).",
+        "status": "built"
+      },
+      {
+        "name": "Derived Base address",
+        "where": "Base",
+        "role": "An address controlled by the policy through Chain Signatures (v1.signer). No private key exists. Receives bridged USDC and repays on behalf of the user.",
+        "status": "built"
+      },
+      {
+        "name": "Agent",
+        "where": "operator host",
+        "role": "Watches HF every 30 s, decides the repay amount, requests 1Click quotes, calls the policy, broadcasts signed txs, records results. Holds only a function-call key for rescue, fund_bridge, approve_pool.",
+        "status": "built"
+      },
+      {
+        "name": "Web app",
+        "where": "Vercel",
+        "role": "Wallet connection, policy verification, deposits (NEAR or any chain), limits, pause, withdraw, dashboard, docs. Holds no secrets.",
+        "status": "built (not yet tested with real wallets)"
+      }
+    ],
+    "rescue_steps": [
+      "1. Read the borrower's HF from Aave (getUserAccountData).",
+      "2. If HF < trigger: compute the USDC that brings HF to the target, capped by max per rescue, today's remaining budget and the actual debt.",
+      "3. If the Base address lacks USDC: get a 1Click quote NEAR USDC -> Base USDC; the policy pays only if the quote is signed by 1Click, delivers to its own Base address, refunds to itself, loses at most 2%, is fresh and unused.",
+      "4. The policy checks pause, amount, daily cap, cooldown, fee and gas caps; builds repay(USDC, amount, 2, borrower); asks v1.signer to sign; verifies the signature recovers to its Base address.",
+      "5. The agent re-checks the signed tx, broadcasts it (with retries), waits, re-reads HF, records HF before/after and tx links, writes a short receipt (NEAR AI Cloud, template fallback)."
+    ],
+    "speed": "About a minute when a bridge is needed (quote, deposit, swap, signature, Base inclusion). Seconds if USDC is already at the policy's Base address."
+  },
+  "how_users_use_it": {
+    "principle": "Users never type, paste or export a private key or seed phrase. Every action is a transaction approved in their own wallet.",
+    "steps": [
+      {
+        "step": "Connect NEAR wallet",
+        "detail": "HOT, Meteor, MyNearWallet, Intear, Ledger, OKX and others via NEAR Connect. Sign-in adds no key.",
+        "status": "built"
+      },
+      {
+        "step": "Connect EVM wallet",
+        "detail": "MetaMask, Rabby, any EIP-6963 wallet; switch to Base; or enter the address read-only.",
+        "status": "built"
+      },
+      {
+        "step": "Open your policy",
+        "detail": "The site verifies the policy has no keys, runs the expected code and is owned by you. Self-service creation (factory) is not built; the operator creates it.",
+        "status": "built (creation: operator script)"
+      },
+      {
+        "step": "Fund it",
+        "detail": "From NEAR in one transaction, or from another chain: pick token and chain, get a one-time deposit address, send, and the page follows it until USDC lands in the policy.",
+        "status": "built (any-chain delivery to the contract unverified on mainnet)"
+      },
+      {
+        "step": "Gas on Base",
+        "detail": "Send ~0.0003 ETH to the policy's Base address.",
+        "status": "built"
+      },
+      {
+        "step": "Manage",
+        "detail": "Change limits, pause (one click, no deposit), resume, withdraw to yourself. Every action shows a review screen with exact contract, method and amounts.",
+        "status": "built"
+      }
+    ],
+    "evm_only_users": "NEAR Connect lists 'Ethereum Wallets', which gives an EVM wallet a NEAR account, so a MetaMask user could own a policy without a NEAR wallet. Status: unverified; claimed only after a test."
+  },
+  "how_user_ai_agents_use_it": {
+    "principle": "An AI agent acting for a user gets exactly the same power as the user's wallet gives it, and the policy's limits bound what any Backstop agent can do. Agents can read freely; changes still need a wallet signature.",
+    "today": [
+      {
+        "what": "Read",
+        "how": "GET /api/dashboard?policy=<id> (validated, cached, read-only), contract views get_config / get_limits / get_status via any NEAR RPC, llms.txt for orientation.",
+        "status": "built"
+      },
+      {
+        "what": "Prepare transactions",
+        "how": "Exact call shapes are documented in docs/site/05-policy-contract.md; an agent can build set_limits / pause / withdraw / deposit transactions for the user's wallet to sign.",
+        "status": "built (documentation)"
+      },
+      {
+        "what": "Quote any-chain deposits",
+        "how": "POST /api/fund/quote returns a 1Click-signed quote whose recipient is fixed to the policy; the agent can show or pay it from the user's wallet.",
+        "status": "built"
+      },
+      {
+        "what": "Run the rescue agent",
+        "how": "Anyone can run apps/agent for their own policy and set it as agent with set_agent; its key can only call rescue, fund_bridge, approve_pool.",
+        "status": "built"
+      }
+    ],
+    "future": [
+      "MCP server / tool schema so assistants can read positions and propose actions natively.",
+      "Per-agent sub-limits (an assistant may lower limits or pause, never raise them).",
+      "Agent running in a TEE with attestation."
+    ],
+    "why_safe_for_agents": "A misbehaving or prompt-injected agent with the Backstop agent key can at most repay the user's own debt early and move up to the daily cap to the policy's own Base address, losing at most ~2% of each bridge to fees. It cannot send funds to anyone."
+  },
+  "how_people_solve_this_today": [
+    {
+      "approach": "Manual monitoring",
+      "how": "Alerts (e.g. HF notifications), then bridge and repay by hand.",
+      "weakness": "Slow, needs the user awake and on the right chain with gas."
+    },
+    {
+      "approach": "Same-chain automation (e.g. DeFi Saver, Summer.fi-style automation)",
+      "how": "Automated repay or deleverage when a ratio is hit, usually by selling collateral or using funds already in a smart wallet on the same chain.",
+      "weakness": "Funds must already be on that chain (often inside their smart wallet); selling collateral realises losses."
+    },
+    {
+      "approach": "Keeper bots (Gelato, Chainlink Automation, custom scripts)",
+      "how": "A bot with a funded key calls repay on a schedule or condition.",
+      "weakness": "The key that can repay can usually also move funds; bridging across chains is still manual or custom."
+    },
+    {
+      "approach": "Over-collateralising",
+      "how": "Keep a large buffer so HF never gets close.",
+      "weakness": "Capital sits idle; still fails in a deep enough crash."
+    },
+    {
+      "approach": "Centralised exchange auto-margin",
+      "how": "CEXs move funds between sub-accounts or auto-add margin from a ledger balance.",
+      "weakness": "Custodial; only works inside that exchange."
+    }
+  ],
+  "how_backstop_is_different": [
+    {
+      "point": "Cross-chain by design",
+      "detail": "The rescue money can start on any chain 1Click supports; the loan is on Base. Bridging is part of the rescue, not a manual step."
+    },
+    {
+      "point": "No key that can steal",
+      "detail": "The policy account has no access keys; the Base address has no private key; the agent key can only call three methods inside on-chain limits. The worst case of a stolen agent key is early repayment, not theft."
+    },
+    {
+      "point": "The contract builds the transaction",
+      "detail": "The agent never hands the contract something to sign. The contract builds repay/approve itself and checks the MPC signature."
+    },
+    {
+      "point": "On-chain verification of the bridge",
+      "detail": "The policy pays a 1Click deposit address only for a quote carrying 1Click's ed25519 signature, with recipient and refund pinned to the policy's own addresses."
+    },
+    {
+      "point": "Loan stays with the user",
+      "detail": "The position stays at the user's own address; Backstop repays on behalf of it. Nothing to migrate into a smart wallet."
+    },
+    {
+      "point": "Agent-native",
+      "detail": "Limits are enforced on-chain, so AI agents can be given the rescue job without being trusted with funds."
+    }
+  ],
+  "uniqueness_claim": {
+    "honest_statement": "We are not aware of another product that combines (1) rescue funds held under on-chain limits on one chain, (2) cross-chain delivery verified on-chain, and (3) a repay transaction built and signed by a keyless contract via MPC, for a loan the user keeps at their own address. We have not done an exhaustive market survey, so we do not claim to be the only solution.",
+    "what_is_hard_to_copy": [
+      "Chain Signatures: a NEAR contract can control an address on Base without any private key.",
+      "NEAR Intents 1Click: one API for deposits from ~39 chains, with signed quotes the contract can verify.",
+      "Both are native to NEAR; on most chains the same design would need a custodial relayer or a per-chain bridge integration."
+    ]
+  },
+  "future_integrations": {
+    "lending_protocols": {
+      "examples": [
+        "Morpho",
+        "Aave on other chains",
+        "Solana lending"
+      ],
+      "how": "One adapter per protocol (read position, build calldata) plus contract support for the new tx shape.",
+      "status": "future"
+    },
+    "perp_dexes_and_ledger_based_venues": {
+      "context": "Many perp DEXes and exchanges keep margin as a ledger balance (off-chain or in an app-chain state) rather than as a token at an address, and settle or rebalance on their own schedule.",
+      "how_backstop_could_integrate": [
+        "Read: an adapter reads the venue's margin ratio from its API or chain state (the same role getUserAccountData plays for Aave).",
+        "Act: instead of repay, the rescue becomes 'deposit margin': the policy pays a 1Click quote whose recipient is the user's margin account on the venue, if 1Click supports that venue as a destination. 1Click's token list on 2026-11-13 includes a 'hypercore' chain with USDC; integration not verified.",
+        "Venues that only accept deposits through their own bridge contract need a contract-built call to that bridge (like repay today), signed through Chain Signatures."
+      ],
+      "what_venues_gain": "Users keep less idle margin on the venue and fewer forced liquidations; the venue keeps the user active.",
+      "status": "future"
+    },
+    "wallets_and_frontends": {
+      "how": "Embed 'protect this loan' using the documented call shapes; the user signs policy setup in their wallet.",
+      "status": "future"
+    },
+    "aurora_intents_connect": {
+      "how": "When it supports NEAR as a destination, owners on any chain could pause or withdraw without a NEAR wallet.",
+      "status": "future (NEAR destination is 'coming soon' per Aurora docs, 2026-11-13)"
+    }
+  },
+  "costs": {
+    "user": "1Click fees on each bridge (plus 0.25% if the operator has no 1Click API key), Base gas per rescue (capped by limits), NEAR gas for wallet actions.",
+    "per_policy_deploy": "About 3.04 NEAR from the deployer today, of which ~2.72 NEAR is code storage (272 KB wasm). Most of it is storage rent for the contract code and is returned to the owner when the policy is closed.",
+    "status": "built"
+  },
+  "faq": [
+    {
+      "q": "Can Backstop or the operator steal my funds?",
+      "a": "Not with any key we hold. The policy has no access keys, withdrawals go only to you, and the agent key can only call rescue, fund_bridge and approve_pool within your limits. Risks we do not remove: the NEAR MPC network (could sign for the Base address, where only transient USDC and gas sit), 1Click custody while a swap is in flight, and bugs: the code is unaudited."
+    },
+    {
+      "q": "What if the agent goes offline?",
+      "a": "Nothing is rescued while it is down. Your funds stay in your policy. You can run your own agent and set it with set_agent."
+    },
+    {
+      "q": "What if the agent key is stolen?",
+      "a": "The attacker can repay your own debt early and move up to your daily cap per day to your policy's Base address, losing up to ~2% of each bridge to fees. Pause with one click, then change the agent."
+    },
+    {
+      "q": "Does the contract know my health factor?",
+      "a": "No. NEAR cannot read Base state. The agent decides when; the contract enforces how much, how often, where and at what fee."
+    },
+    {
+      "q": "Is it fast enough?",
+      "a": "About a minute with a bridge. A faster crash can liquidate first. Keeping some USDC at the policy's Base address removes the bridge from the critical path."
+    },
+    {
+      "q": "Do I have to move my loan?",
+      "a": "No. The loan stays at your own Base address; Backstop repays on its behalf."
+    },
+    {
+      "q": "Can I get my money out?",
+      "a": "Yes: withdraw USDC and spare NEAR to yourself at any time, also while paused. USDC that already reached the policy's Base address can only leave as a repayment today (no sweep yet)."
+    },
+    {
+      "q": "Why NEAR?",
+      "a": "Chain Signatures let a keyless NEAR contract control a Base address, and NEAR Intents 1Click gives verifiable cross-chain deposits from ~39 chains. Together they make the keyless, cross-chain design possible."
+    },
+    {
+      "q": "Which chains can I fund from?",
+      "a": "Any chain 1Click supports: USDC/USDT on about 20 (Ethereum, Base, Arbitrum, Solana, Tron, TON, BSC, Polygon, Sui, Stellar, ...), other tokens by swap. Delivery into the policy contract is not yet proven on mainnet."
+    },
+    {
+      "q": "Can my AI assistant manage this?",
+      "a": "It can read everything and prepare transactions; your wallet still approves changes. A rescue agent you run can only act inside the on-chain limits."
+    },
+    {
+      "q": "Is it audited?",
+      "a": "No. It is a hackathon prototype with an internal review (no Critical or High findings). Use tiny amounts."
+    },
+    {
+      "q": "What if 1Click or Aave change their APIs?",
+      "a": "The policy is immutable, so bridging or repaying would stop; your funds stay withdrawable and you can move to a new policy."
+    },
+    {
+      "q": "Why not just over-collateralise?",
+      "a": "You can; Backstop lets you keep less idle collateral and keep the buffer anywhere, on any chain, until it is needed."
+    },
+    {
+      "q": "What does it cost?",
+      "a": "Bridge fees and capped gas per rescue; the policy itself needs a one-time NEAR storage deposit (being reduced)."
+    },
+    {
+      "q": "What does Backstop charge?",
+      "a": "0.10% of each bridged amount, only when a rescue bridges money, capped by the contract at 0.50% and fixed when the policy is created. Nothing for deposits, withdrawals or watching."
+    }
+  ],
+  "not_built_yet": [
+    "Mainnet run with tx links",
+    "Self-service policy creation (factory)",
+    "Sweep of funds at the policy's Base address",
+    "Debt assets other than USDC; protocols other than Aave v3 on Base",
+    "MCP / agent tool interface",
+    "Timelock on limit increases",
+    "Audit"
+  ],
+  "sources": {
+    "policy_contract": "docs/site/05-policy-contract.md",
+    "security": "docs/SECURITY.md",
+    "claims_to_tests": "docs/JUDGES.md",
+    "chain_signatures": "https://docs.near.org/chain-abstraction/chain-signatures",
+    "one_click": "https://docs.near-intents.org",
+    "one_click_tokens": "https://1click.chaindefuser.com/v0/tokens",
+    "aurora_intents_connect": "https://docs.intents.aurora.dev/intents-connect/supported-chains.md"
+  },
+  "business_model": {
+    "status": "built in contract and scripts, not yet run on mainnet",
+    "fee": "0.10% (10 bps) of each amount bridged by a rescue, paid in NEAR USDC to the operator's fee account in the same atomic batch as the bridge",
+    "charged_when": "only when a rescue bridges money; no deposit, withdrawal or monitoring fee",
+    "protections": [
+      "rate fixed at policy creation, no setter",
+      "contract caps it at 0.50% (50 bps)",
+      "visible in get_config, the review screen and the dashboard",
+      "not refunded if 1Click refunds the swap"
+    ],
+    "examples": {
+      "$10": "$0.01",
+      "$100": "$0.10",
+      "$1000": "$1.00"
+    },
+    "honest_scale": "Rescues are rare, so the fee proves a transparent model rather than being income at hackathon scale. Later: paid hosted agent, venue revenue share, standby premium."
+  }
+}

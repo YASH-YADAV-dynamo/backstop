@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The jobs only read the repo; the token gets nothing else.
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript (typecheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  contract:
+    name: Policy contract (cargo test + wasm build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/policy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/policy
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      # cargo build (--cfg near) + wasm-opt -Oz + import check; prints size and sha256 (code hash).
+      - run: pnpm contract:build
+        working-directory: .

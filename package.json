@@ -1,0 +1,34 @@
+{
+  "name": "backstop",
+  "private": true,
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "demo": "pnpm --filter @backstop/agent demo",
+    "check": "bash scripts/check.sh",
+    "contract:test": "cd contracts/policy && cargo test",
+    "contract:build": "pnpm factory:build",
+    "policy:build": "cd contracts/policy && cargo build --target wasm32-unknown-unknown --release && mkdir -p target/near && wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory --enable-sign-ext --enable-mutable-globals target/wasm32-unknown-unknown/release/backstop_policy.wasm -o target/near/backstop_policy.wasm && node ../../scripts/check-wasm.mjs target/near/backstop_policy.wasm",
+    "factory:build": "pnpm policy:build && cd contracts/factory && cargo build --target wasm32-unknown-unknown --release && mkdir -p target/near && wasm-opt -Oz --skip-pass=memory-packing --strip-debug --strip-producers --enable-bulk-memory --enable-sign-ext --enable-mutable-globals target/wasm32-unknown-unknown/release/backstop_factory.wasm -o target/near/backstop_factory.wasm && node ../../scripts/check-wasm.mjs target/near/backstop_factory.wasm --embeds=../policy/target/near/backstop_policy.wasm env.panic_utf8 env.sha256",
+    "factory:test": "pnpm policy:build && cd contracts/factory && cargo test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "binaryen": "131.0.0",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.11",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "pnpm": {
+    "overrides": {
+      "chainsig.js>@noble/curves": "1.9.7"
+    }
+  }
+}
