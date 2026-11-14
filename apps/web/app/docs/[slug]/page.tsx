@@ -31,10 +31,10 @@ export default async function DocPage({ params }: Props) {
   return (
     <div className="flex gap-10">
       <article className="min-w-0 flex-1">
-        <h1 className="font-display text-4xl">{doc.title}</h1>
+        <h1 className="t-h1">{doc.title}</h1>
         {doc.description && <p className="mt-2 text-lg text-muted-foreground">{doc.description}</p>}
         <div
-          className="prose prose-neutral mt-8 max-w-none dark:prose-invert prose-headings:tracking-tight prose-a:text-primary prose-a:no-underline hover:prose-a:underline"
+          className="prose prose-neutral mt-8 max-w-none dark:prose-invert prose-a:text-primary prose-a:no-underline hover:prose-a:underline"
           dangerouslySetInnerHTML={{ __html: doc.html }}
         />
         <nav aria-label="Previous and next" className="mt-12 grid gap-3 border-t pt-6 sm:grid-cols-2">
@@ -61,7 +61,7 @@ export default async function DocPage({ params }: Props) {
       {doc.toc.length > 0 && (
         <aside className="hidden w-52 shrink-0 xl:block">
           <div className="sticky top-28">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">On this page</p>
+            <p className="mb-2 t-label text-muted-foreground">On this page</p>
             <ul className="flex flex-col gap-1.5 text-sm">
               {doc.toc.map((t) => (
                 <li key={t.id} className={t.depth === 3 ? "pl-3" : undefined}>

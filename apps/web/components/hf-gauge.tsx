@@ -107,9 +107,9 @@ export function HfGauge({ hf, trigger, target, rescuing = false, staleLabel }: P
         y={CY - 18}
         textAnchor="middle"
         fontSize={38}
-        fontWeight={780}
+        fontWeight={600}
         fill="var(--color-foreground)"
-        style={{ fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-display)" }}
+        style={{ fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", letterSpacing: "-0.03em" }}
       >
         {number === null ? "∞" : formatHf(number)}
       </text>

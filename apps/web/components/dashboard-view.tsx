@@ -304,7 +304,7 @@ export function DashboardView({ initial, policy }: { initial: DashboardSnapshot;
       </div>
       <section id="history" className="flex flex-col gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Rescue history</h2>
+          <h2 className="t-h3">Rescue history</h2>
           <p className="text-sm text-muted-foreground">Each rescue links to its transactions.</p>
         </div>
         <RescueHistory history={snap.history} chain={chain} />

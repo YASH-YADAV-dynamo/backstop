@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ChainLogo, chainName } from "@/components/landing/chain-logo";
-import { ShieldMark } from "@/components/logo";
+import { Logo } from "@/components/logo";
 import { SITE } from "@/lib/site";
 
 const COLS = [
@@ -31,10 +31,7 @@ export function SiteFooter() {
     <footer className="relative border-t">
       <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 sm:grid-cols-[1.5fr_1fr_1fr_1fr]">
         <div>
-          <div className="flex items-center gap-2 font-semibold">
-            <ShieldMark className="size-6 text-primary" />
-            {SITE.name}
-          </div>
+          <Logo />
           <p className="mt-3 max-w-xs text-sm text-muted-foreground">
             Pulls your money from any chain to save your loan before it gets liquidated. Works with Aave on Base and Arbitrum One.
           </p>
@@ -45,7 +42,7 @@ export function SiteFooter() {
         </div>
         {COLS.map((c) => (
           <nav key={c.title} aria-label={c.title}>
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{c.title}</p>
+            <p className="t-label text-muted-foreground">{c.title}</p>
             <ul className="mt-3 flex flex-col gap-2 text-sm">
               {c.links.map((l) => (
                 <li key={l.href}>
@@ -58,7 +55,7 @@ export function SiteFooter() {
           </nav>
         ))}
         <nav aria-label="Project">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Project</p>
+          <p className="t-label text-muted-foreground">Project</p>
           <ul className="mt-3 flex flex-col gap-2 text-sm">
             <li>
               <a href={SITE.repoUrl} className="text-foreground/80 transition-colors hover:text-primary">
@@ -75,7 +72,7 @@ export function SiteFooter() {
       </div>
       <div className="border-t">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-5 text-sm text-muted-foreground">
-          <span className="text-xs font-medium uppercase tracking-wider">Networks</span>
+          <span className="t-label">Networks</span>
           {NETWORKS.map((n) => (
             <span key={n} className="inline-flex items-center gap-2 text-foreground/80">
               <ChainLogo chain={n} className="h-4" />

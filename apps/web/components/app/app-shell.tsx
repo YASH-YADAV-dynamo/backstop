@@ -17,7 +17,7 @@ export function AppShell() {
     <div className="mx-auto max-w-5xl px-4 py-8 sm:py-10">
       <Toaster />
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Protect your loan</h1>
+        <h1 className="t-h2">Protect your loan</h1>
         <p className="mt-1 text-sm text-muted-foreground">Backstop repays part of your Aave loan before it can be liquidated.</p>
       </header>
       {mounted ? (

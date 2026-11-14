@@ -1,6 +1,6 @@
 import { FolderGit2 } from "lucide-react";
 import Link from "next/link";
-import { ShieldMark } from "@/components/logo";
+import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { SITE } from "@/lib/site";
@@ -16,10 +16,9 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
-        <Link href="/" aria-label={`${SITE.name} home`} className="mr-auto flex items-center gap-2 font-semibold tracking-tight">
-          <ShieldMark className="size-7 text-primary" />
-          <span className="text-base">{SITE.name}</span>
-          <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Beta</span>
+        <Link href="/" aria-label={`${SITE.name} home`} className="mr-auto flex items-center gap-2.5">
+          <Logo />
+          <span className="t-label rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">Beta</span>
         </Link>
         <nav className="hidden items-center gap-0.5 text-sm sm:flex">
           {NAV.map((item) => (

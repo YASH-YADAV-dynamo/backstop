@@ -36,7 +36,7 @@ export function Reveal({ children, className = "", delay = 0 }: { children: Reac
   return (
     <div
       ref={ref}
-      className={`transition-[opacity,transform] duration-700 ease-out ${hidden ? "translate-y-4 opacity-0" : "opacity-100"} ${className}`}
+      className={`transition-[opacity,transform] duration-500 ease-out ${hidden ? "translate-y-2.5 opacity-0" : "opacity-100"} ${className}`}
       style={{ transitionDelay: hidden ? "0ms" : `${delay}ms` }}
     >
       {children}

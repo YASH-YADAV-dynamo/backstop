@@ -1,8 +1,9 @@
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ChainChip, ChainLogo, type ChainLogoKey } from "@/components/landing/chain-logo";
-import { HeroRescue } from "@/components/landing/hero-rescue";
+import { DotFlow } from "@/components/landing/dot-flow";
+import { DotHero } from "@/components/landing/dot-hero";
 import { ContainedIcon, LimitsIcon, NoKeyIcon, RepayIcon, VaultIcon, WatchIcon } from "@/components/landing/icons";
 import { Reveal } from "@/components/landing/reveal";
 import { RescueHistory } from "@/components/rescue-table";
@@ -14,6 +15,7 @@ import { SITE } from "@/lib/site";
 
 /** Re-read the rescue history at most once a minute. */
 export const revalidate = 60;
+
 
 const TICKS = ["You set the limits", "Only you can withdraw", "Pause any time"];
 
@@ -59,37 +61,27 @@ const FAQ = [
   { q: "Is it audited?", a: "Not yet. Backstop is in beta. Its smart contracts are open source and not yet audited, so start with an amount you are comfortable with. See Risks and limits." },
 ];
 
-const GRID_BG = {
-  backgroundImage:
-    "linear-gradient(to right, var(--color-border) 1px, transparent 1px), linear-gradient(to bottom, var(--color-border) 1px, transparent 1px)",
-  backgroundSize: "64px 64px",
-} as const;
+const CARD = "group relative h-full rounded-xl border bg-card/50 p-6 transition-colors duration-300 ease-out hover:border-primary/60 sm:p-7";
+const ICON_TILE = "grid size-11 place-items-center rounded-lg border border-primary/30 bg-primary/10 text-primary";
 
-const CARD = "group relative h-full overflow-hidden rounded-2xl border bg-card/70 p-6 transition-colors duration-300 hover:border-primary/50 sm:p-7";
-const ICON_TILE = "grid size-12 place-items-center rounded-xl border border-primary/30 bg-primary/10 text-primary shadow-[0_0_28px_-8px_var(--color-primary)]";
-
-/** A thin light along the top edge of a card that brightens on hover. */
-function CardEdge() {
+function SectionHead({ index, eyebrow, title }: { index: string; eyebrow: string; title: string }) {
   return (
-    <span
-      aria-hidden
-      className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-30 transition-opacity duration-300 group-hover:opacity-100"
-    />
+    <Reveal>
+      <p className="t-label text-primary">
+        {index} / {eyebrow}
+      </p>
+      <h2 className="t-h1 mt-4 max-w-3xl">{title}</h2>
+    </Reveal>
   );
 }
 
-function SectionBlock({ id, eyebrow, title, lead, children }: { id?: string; eyebrow: string; title: string; lead?: string; children: ReactNode }) {
+function SectionBlock({ id, index, eyebrow, title, children }: { id?: string; index: string; eyebrow: string; title: string; children: ReactNode }) {
   return (
-    <section id={id} className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 py-14 sm:py-24">
-      <Reveal>
-        <p className="eyebrow flex items-center gap-3 text-primary">
-          <span className="h-px w-8 bg-primary" aria-hidden />
-          {eyebrow}
-        </p>
-        <h2 className="font-display mt-4 max-w-3xl text-[1.9rem] sm:text-5xl">{title}</h2>
-        {lead ? <p className="mt-4 max-w-2xl text-muted-foreground sm:text-lg">{lead}</p> : null}
-      </Reveal>
-      <div className="mt-9 sm:mt-12">{children}</div>
+    <section id={id} className="scroll-mt-14 border-t border-dotted">
+      <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:py-24">
+        <SectionHead index={index} eyebrow={eyebrow} title={title} />
+        <div className="mt-9 sm:mt-12">{children}</div>
+      </div>
     </section>
   );
 }
@@ -107,98 +99,80 @@ export default async function Home() {
     history.state === "ok" && history.data.some((r) => !r.dryRun) ? { state: "ok", data: history.data.filter((r) => !r.dryRun) } : null;
 
   return (
-    <div className="overflow-x-clip">
-      <section className="relative isolate">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 opacity-40"
-          style={{
-            ...GRID_BG,
-            maskImage: "radial-gradient(75% 60% at 50% 25%, black, transparent)",
-            WebkitMaskImage: "radial-gradient(75% 60% at 50% 25%, black, transparent)",
-          }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 -top-40 -z-10 h-[38rem]"
-          style={{ background: "radial-gradient(50% 60% at 50% 30%, color-mix(in oklab, var(--color-primary) 20%, transparent), transparent 75%)" }}
-        />
+    <div className="landing">
 
-        <div className="mx-auto grid w-full max-w-6xl items-center gap-10 px-4 pt-10 pb-12 sm:pt-14 sm:pb-16 lg:grid-cols-[0.74fr_1.26fr] lg:gap-12">
-          <div className="min-w-0">
-            <p className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-full border bg-card/70 px-3.5 py-1.5 text-xs text-muted-foreground backdrop-blur sm:text-sm">
-              For Aave loans on
-              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                <ChainLogo chain="base" className="h-3.5" /> Base
-              </span>
-              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                <ChainLogo chain="arbitrum" className="h-4" /> Arbitrum One
-              </span>
-            </p>
-            <h1 className="font-display mt-6 text-[clamp(2.5rem,7vw,4.5rem)] lg:text-[3.6rem]">
-              Save your loan{" "}
-              <span className="bg-gradient-to-r from-primary via-primary to-warn bg-clip-text text-transparent">before it is liquidated.</span>
-            </h1>
-            <p className="mt-5 max-w-[52ch] text-lg text-muted-foreground">
-              When your loan&apos;s health drops, Backstop moves your spare USDC from NEAR to your loan and repays part of it. Health
-              recovers and you keep your collateral.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild size="lg" className="w-full shadow-[0_0_32px_-6px_var(--color-primary)] sm:w-auto">
-                <Link href="/app">
-                  Protect my loan <ArrowRight aria-hidden />
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline" className="w-full bg-card/60 backdrop-blur sm:w-auto">
-                <Link href="#how">See how it works</Link>
-              </Button>
-            </div>
-            <ul className="flex flex-col gap-2 text-sm lg:mt-8">
-              {TICKS.map((t) => (
-                <li key={t} className="hidden items-center gap-2 lg:flex">
-                  <Check className="size-4 text-safe" aria-hidden />
-                  {t}
-                </li>
-              ))}
-              {last ? (
-                <li>
-                  <span className="text-muted-foreground">Last rescue: </span>
-                  <a href={last.links.baseRepayTx} target="_blank" rel="noreferrer" className="num font-medium text-primary hover:underline">
-                    {last.amountUsdc} USDC, health {last.hfBefore} → {last.hfAfter}
-                  </a>
-                </li>
-              ) : null}
-            </ul>
-          </div>
-          <HeroRescue />
+      <DotHero>
+        <h1 className="t-display max-w-4xl max-sm:text-[2.4rem]">Your loan, protected from liquidation.</h1>
+        <p className="mt-5 max-w-[46ch] text-base text-muted-foreground sm:mt-6 sm:text-lg">
+          Backstop repays part of your Aave loan when its health drops below your trigger, using spare USDC you keep in your own
+          vault.
+        </p>
+        <div className="mt-7 flex justify-center gap-2.5">
+          <Button asChild size="lg" className="max-sm:px-4">
+            <Link href="/app">
+              Protect my loan <ArrowRight aria-hidden />
+            </Link>
+          </Button>
+          <Button asChild size="lg" variant="outline" className="bg-card/70 max-sm:px-4">
+            <Link href="#how">See how it works</Link>
+          </Button>
         </div>
-      </section>
+        <p className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <ChainLogo chain="base" className="h-3.5" /> Base
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <ChainLogo chain="arbitrum" className="h-4" /> Arbitrum One
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <ChainLogo chain="near" className="h-3.5" /> NEAR
+          </span>
+        </p>
+      </DotHero>
 
-      <section aria-label="The terms" className="border-y bg-muted/30">
+      <section aria-label="The terms" className="relative border-t border-dotted bg-background">
         <dl className="mx-auto grid w-full max-w-6xl grid-cols-2 lg:grid-cols-4">
           {FACTS.map((f, i) => (
-            <div key={f.label} className={`flex flex-col-reverse justify-end gap-2 px-4 py-6 sm:py-8 ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t lg:border-t-0" : ""} ${i === 2 ? "lg:border-l" : ""}`}>
+            <div
+              key={f.label}
+              className={`flex flex-col-reverse justify-end gap-2 border-dotted px-4 py-7 sm:py-9 ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t lg:border-t-0" : ""} ${i === 2 ? "lg:border-l" : ""}`}
+            >
               <dt className="text-sm text-muted-foreground">{f.label}</dt>
-              <dd className="font-display text-3xl sm:text-4xl">{f.value}</dd>
+              <dd className="t-num text-2xl font-medium tracking-tight sm:text-4xl">{f.value}</dd>
             </div>
           ))}
         </dl>
+        <ul className="t-label mx-auto flex w-full max-w-6xl flex-wrap gap-x-8 gap-y-2 border-t border-dotted px-4 py-4 text-muted-foreground">
+          {TICKS.map((t) => (
+            <li key={t}>
+              <span className="mr-1.5 inline-block size-1.5 rounded-full bg-primary align-middle" aria-hidden />
+              {t}
+            </li>
+          ))}
+          {last ? (
+            <li className="normal-case tracking-normal">
+              Last rescue:{" "}
+              <a href={last.links.baseRepayTx} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                {last.amountUsdc} USDC, health {last.hfBefore} → {last.hfAfter}
+              </a>
+            </li>
+          ) : null}
+        </ul>
       </section>
 
-      <SectionBlock id="how" eyebrow="How it works" title="Three steps. Then it watches for you.">
-        <ol className="grid gap-4 md:grid-cols-3">
+      <SectionBlock id="how" index="01" eyebrow="How it works" title="Three steps. Then it watches for you.">
+        <ol className="grid gap-5 md:grid-cols-3">
           {STEPS.map((s, i) => (
             <li key={s.title}>
               <Reveal delay={i * 90} className="h-full">
                 <div className={`${CARD} flex flex-col`}>
-                  <CardEdge />
                   <div className="flex items-center justify-between">
                     <span className={ICON_TILE}>
                       <s.icon className="size-6" />
                     </span>
-                    <span className="font-display text-4xl text-foreground/10">0{i + 1}</span>
+                    <span className="t-label text-muted-foreground">Step 0{i + 1}</span>
                   </div>
-                  <h3 className="font-display mt-6 text-xl leading-tight sm:text-[1.4rem]">{s.title}</h3>
+                  <h3 className="t-h3 mt-6">{s.title}</h3>
                   <p className="mt-3 text-sm text-muted-foreground sm:text-base">{s.body}</p>
                   {s.chains.length > 0 ? (
                     <div className="mt-auto flex flex-wrap gap-2 pt-6">
@@ -220,104 +194,92 @@ export default async function Home() {
         </p>
       </SectionBlock>
 
-      <div className="relative isolate">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10"
-          style={{ background: "radial-gradient(45% 50% at 85% 40%, color-mix(in oklab, var(--color-primary) 10%, transparent), transparent 75%)" }}
-        />
-        <SectionBlock id="safety" eyebrow="Safety" title="Built so it can only repay your loan.">
-          <div className="grid gap-4 md:grid-cols-3">
-            {SAFETY.map((s, i) => (
-              <Reveal key={s.title} delay={i * 90} className="h-full">
-                <div className={`${CARD} ${i === 2 ? "border-primary/40 bg-gradient-to-b from-primary/15 to-card/70" : ""}`}>
-                  <CardEdge />
-                  <span className={ICON_TILE}>
-                    <s.icon className="size-6" />
-                  </span>
-                  <h3 className="font-display mt-6 text-xl leading-tight sm:text-[1.4rem]">{s.title}</h3>
-                  <p className="mt-3 text-sm text-muted-foreground sm:text-base">{s.body}</p>
-                </div>
-              </Reveal>
+      <section aria-label="Where the money moves" className="border-t border-dotted">
+        <div className="t-label mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 pt-6 text-muted-foreground">
+          <span className="inline-flex items-center gap-2 text-foreground">
+            <ChainLogo chain="near" className="h-4" /> Your vault
+          </span>
+          <span className="hidden text-primary sm:inline">Your spare USDC moves only when your loan needs it</span>
+          <span className="inline-flex items-center gap-2 text-foreground">
+            Your loan <ChainLogo chain="base" className="h-4" /> <ChainLogo chain="arbitrum" className="h-[1.125rem]" />
+          </span>
+        </div>
+        <DotFlow />
+      </section>
+
+      <SectionBlock id="safety" index="02" eyebrow="Safety" title="Built so it can only repay your loan.">
+        <div className="grid gap-5 md:grid-cols-3">
+          {SAFETY.map((s, i) => (
+            <Reveal key={s.title} delay={i * 90} className="h-full">
+              <div className={`${CARD} ${i === 2 ? "border-primary/50 bg-primary/10" : ""}`}>
+                <span className={ICON_TILE}>
+                  <s.icon className="size-6" />
+                </span>
+                <h3 className="t-h3 mt-6">{s.title}</h3>
+                <p className="mt-3 text-sm text-muted-foreground sm:text-base">{s.body}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+        <div className="mt-10">
+          <p className="t-label text-muted-foreground">Under the hood</p>
+          <ul className="mt-4 flex flex-wrap gap-2 text-sm">
+            {UNDER_THE_HOOD.map((u) => (
+              <li key={u.label}>
+                <Link href={u.href} className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 transition-colors duration-200 hover:border-primary hover:text-primary">
+                  {u.chain ? <ChainLogo chain={u.chain} className="h-4" /> : null}
+                  {u.label}
+                </Link>
+              </li>
             ))}
-          </div>
-          <div className="mt-10">
-            <p className="eyebrow text-muted-foreground">Under the hood</p>
-            <ul className="mt-4 flex flex-wrap gap-2 text-sm">
-              {UNDER_THE_HOOD.map((u) => (
-                <li key={u.label}>
-                  <Link
-                    href={u.href}
-                    className="inline-flex items-center gap-2 rounded-full border bg-card/60 px-3 py-1.5 transition-colors hover:border-primary hover:text-primary"
-                  >
-                    {u.chain ? <ChainLogo chain={u.chain} className="h-4" /> : null}
-                    {u.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </SectionBlock>
-      </div>
+          </ul>
+        </div>
+      </SectionBlock>
 
       {mainnetRows ? (
-        <SectionBlock id="history" eyebrow="Rescue history" title="Every rescue, on the record.">
+        <SectionBlock id="history" index="03" eyebrow="Rescue history" title="Every rescue, on the record.">
           <RescueHistory history={mainnetRows} chain={null} />
         </SectionBlock>
       ) : null}
 
-      <section className="mx-auto grid w-full max-w-6xl gap-9 px-4 py-14 sm:py-24 lg:grid-cols-[0.8fr_1.2fr] lg:gap-14">
-        <Reveal>
-          <p className="eyebrow flex items-center gap-3 text-primary">
-            <span className="h-px w-8 bg-primary" aria-hidden />
-            FAQ
-          </p>
-          <h2 className="font-display mt-4 text-[1.9rem] sm:text-5xl">Questions.</h2>
-          <p className="mt-4 max-w-sm text-muted-foreground">
-            The longer answers are in the{" "}
-            <Link href="/docs" className="font-medium text-primary hover:underline">
-              docs
-            </Link>
-            , and all of the code is{" "}
-            <a href={SITE.repoUrl} className="font-medium text-primary hover:underline">
-              open source
-            </a>
-            .
-          </p>
-        </Reveal>
-        <Accordion type="single" collapsible className="rounded-2xl border bg-card/70 px-5 sm:px-6">
-          {FAQ.map((f) => (
-            <AccordionItem key={f.q} value={f.q}>
-              <AccordionTrigger>{f.q}</AccordionTrigger>
-              <AccordionContent>{f.a}</AccordionContent>
-            </AccordionItem>
-          ))}
-        </Accordion>
+      <section className="border-t border-dotted">
+        <div className="mx-auto grid w-full max-w-6xl gap-9 px-4 py-14 sm:py-24 lg:grid-cols-[0.8fr_1.2fr] lg:gap-14">
+          <div>
+            <SectionHead index={mainnetRows ? "04" : "03"} eyebrow="FAQ" title="Questions." />
+            <p className="mt-4 max-w-sm text-muted-foreground">
+              The longer answers are in the{" "}
+              <Link href="/docs" className="font-medium text-primary hover:underline">
+                docs
+              </Link>
+              , and all of the code is{" "}
+              <a href={SITE.repoUrl} className="font-medium text-primary hover:underline">
+                open source
+              </a>
+              .
+            </p>
+          </div>
+          <Accordion type="single" collapsible className="rounded-xl border bg-card/50 px-5 sm:px-6">
+            {FAQ.map((f) => (
+              <AccordionItem key={f.q} value={f.q}>
+                <AccordionTrigger>{f.q}</AccordionTrigger>
+                <AccordionContent>{f.a}</AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
+        </div>
       </section>
 
-      <section className="mx-auto w-full max-w-6xl px-4 pb-14 sm:pb-24">
-        <div className="relative isolate overflow-hidden rounded-3xl border border-primary/30 bg-card px-6 py-12 sm:px-12 sm:py-20 sm:text-center">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 opacity-40"
-            style={{
-              ...GRID_BG,
-              maskImage: "radial-gradient(70% 90% at 50% 100%, black, transparent)",
-              WebkitMaskImage: "radial-gradient(70% 90% at 50% 100%, black, transparent)",
-            }}
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10"
-            style={{ background: "radial-gradient(60% 90% at 50% 110%, color-mix(in oklab, var(--color-primary) 32%, transparent), transparent 70%)" }}
-          />
-          <h2 className="font-display mx-auto max-w-2xl text-[1.9rem] sm:text-5xl">Put a backstop under your loan.</h2>
-          <p className="mt-4 text-muted-foreground sm:text-lg">Set your limits once. Pause or withdraw any time.</p>
-          <Button asChild size="lg" className="mt-8 w-full shadow-[0_0_32px_-6px_var(--color-primary)] sm:w-auto">
-            <Link href="/app">
-              Protect my loan <ArrowRight aria-hidden />
-            </Link>
-          </Button>
+      <section className="border-t border-dotted">
+        <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:py-24">
+          <div className="relative rounded-2xl border border-primary/40 bg-card/50 px-6 py-12 text-center sm:px-12 sm:py-20">
+            <h2 className="t-h1 mx-auto max-w-3xl">Put a backstop under your loan.</h2>
+            <p className="mt-4 text-muted-foreground sm:text-lg">Set your limits once. Pause or withdraw any time.</p>
+            <Button asChild size="lg" className="mt-8 w-full sm:w-auto">
+              <Link href="/app">
+                Protect my loan <ArrowRight aria-hidden />
+              </Link>
+            </Button>
+          </div>
         </div>
       </section>
     </div>

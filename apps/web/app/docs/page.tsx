@@ -13,7 +13,7 @@ export default async function DocsIndex() {
   const docs = await listDocs();
   return (
     <div>
-      <h1 className="font-display text-4xl">Documentation</h1>
+      <h1 className="t-h1">Documentation</h1>
       <p className="mt-2 text-muted-foreground">How Backstop works, what it can and cannot do, and how to run it.</p>
       {docs.length === 0 ? (
         <div className="mt-8">

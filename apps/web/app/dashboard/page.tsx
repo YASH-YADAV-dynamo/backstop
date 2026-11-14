@@ -27,7 +27,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   return (
     <div className="mx-auto max-w-6xl px-4 py-10">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-4xl">Dashboard</h1>
+        <h1 className="t-h1">Dashboard</h1>
         {chain ? <ChainBadge chain={chain} className="text-sm" /> : null}
       </div>
       <p className="mt-1 mb-6 text-sm text-muted-foreground">Live from mainnet: the vault on NEAR and its Aave loan on {chain ? chain.name : "its loan chain"}.</p>
