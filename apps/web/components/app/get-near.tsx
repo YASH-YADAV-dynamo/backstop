@@ -11,6 +11,7 @@ import { baseTxUrl } from "@backstop/config/registry";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { formatUnits } from "viem";
 import { useSwitchChain } from "wagmi";
 import { ConnectWalletButton } from "@/components/app/connect-steps";
 import { useEvmIdentity } from "@/components/app/evm-identity";
@@ -43,6 +44,7 @@ import {
 import { prepareTopUpSend, prepareUnwrap, readOriginBalances, readWrappedNear, unwrapGasMessage } from "@/lib/get-near-review";
 import { useLocalString } from "@/lib/use-client";
 import { cn } from "@/lib/utils";
+import { formatUtc } from "@/lib/format";
 import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
 
 const origin = NEAR_TOPUP_ORIGINS[0]!;
@@ -52,6 +54,25 @@ const stamp = () => Date.now();
 type Offer = { quote: TopUpQuoteView; req: TopUpRequest; symbol: string; decimals: number; contract: string | null; takenAt: number; epoch: number };
 
 /** Small stepper: dots joined by a line that fills as the swap moves on. `working`: the current step is waiting on the network. */
+/** A value with a Copy button (for sending by hand from any wallet). */
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="text-muted-foreground">{label}</span>
+      <code className="min-w-0 break-all font-mono text-foreground">{value}</code>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2"
+        onClick={() => void navigator.clipboard?.writeText(value).then(() => setCopied(true), () => setCopied(false))}
+      >
+        {copied ? "Copied" : "Copy"}
+      </Button>
+    </div>
+  );
+}
+
 function Progress({ at, working }: { at: number; working: boolean }) {
   const last = PROGRESS.length - 1;
   return (
@@ -274,7 +295,10 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
 
   function confirm() {
     const offer = liveOffer;
-    if (!offer || !evmAddress || nativeYocto === null) return;
+    // Never fail silently: say why nothing happened.
+    if (!offer) return setError("This quote is no longer valid (your wallet changed). Get a new quote.");
+    if (!evmAddress) return setError("Connect MetaMask or Rabby, then press Confirm and send again.");
+    if (nativeYocto === null) return setError("Still reading your NEAR balance. Try again in a second.");
     if (offer.quote.deadline && Date.parse(offer.quote.deadline) <= stamp()) {
       setOffer(null);
       setError("That quote expired. Get a new one.");
@@ -332,6 +356,13 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
                   ["Spread and fees", q.amountOutUsd !== null ? `about ${usdText(Math.max(0, q.amountInUsd - q.amountOutUsd))}${q.extraFee ? " (includes a 0.25% service fee)" : ""}` : "included in the rate"],
                   ["Arrives in", `${accountId}, ${durationText(q.timeEstimate)} after your deposit confirms`],
                   ...(NEAR_TOPUP_DESTINATION.delivery === "wrapped" ? [["Arrives as", "wrapped NEAR; one more approval turns it into NEAR"]] : []),
+                  ...((): string[][] => {
+                    // Show that only the shortfall is swapped: what stays in the wallet after this send.
+                    const held = balances.data?.[q.originAsset];
+                    if (held === undefined) return [];
+                    const left = held - BigInt(q.amountIn);
+                    return left >= 0n ? [["Stays in your wallet", `${tokenText(left, offer.decimals, offer.symbol, 4)}${offer.contract ? "" : " (minus network fees)"}`]] : [];
+                  })(),
                   ["If the swap cannot finish", `your ${offer.symbol} goes back to ${q.refundTo} on ${origin.name}`],
                 ].map(([label, value]) => (
                   <div key={label} className="flex flex-col gap-0.5 px-3 py-2 sm:flex-row sm:justify-between sm:gap-4">
@@ -357,7 +388,8 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
             ) : null}
             {short && short.shortYocto > 0n ? (
               <p className="text-sm">
-                You need about <strong>{nearText(short.shortYocto, 3)}</strong> more. We ask the swap for {nearText(short.targetYocto, 3)} (5% extra covers the spread).
+                You need about <strong>{nearText(short.shortYocto, 3)}</strong> more. We swap only that much (plus 5% for the spread), about{" "}
+                {nearText(short.targetYocto, 3)}. The rest of your wallet is not touched.
               </p>
             ) : null}
             <div role="radiogroup" aria-label="Pay with" className="grid gap-2 sm:grid-cols-2">
@@ -367,7 +399,7 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
                   <label key={a.assetId} className="flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm has-[:checked]:border-primary">
                     <input type="radio" name="get-near-asset" checked={assetId === a.assetId} onChange={() => setAssetId(a.assetId)} />
                     <span className="font-medium">{a.symbol} on {origin.name}</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{held === undefined ? (balances.isPending ? "..." : "") : tokenText(held, a.decimals, a.symbol, 4)}</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{held === undefined ? (balances.isPending ? "..." : "") : `you have ${tokenText(held, a.decimals, a.symbol, 4)}`}</span>
                   </label>
                 );
               })}
@@ -407,7 +439,7 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
             <p>
               Send {tokenText(BigInt(s.quote.amountIn), s.decimals, s.symbol, 8)} on {origin.name} from your wallet. You receive at least {nearText(BigInt(s.quote.minAmountOut), 4)} in {accountId}.
             </p>
-            <p className="text-xs text-muted-foreground">This quote is valid for {remaining >= 3600 ? `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m` : `${Math.floor(remaining / 60)}m ${remaining % 60}s`}.</p>
+            <p className="text-xs text-muted-foreground">This quote is valid for {remaining >= 3600 ? `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m` : `${Math.floor(remaining / 60)}m ${remaining % 60}s`} (until {formatUtc(s.quote.deadline!)}).</p>
             {identity.mode !== "wallet" ? (
               <ConnectWalletButton label="Connect MetaMask or Rabby" />
             ) : wrongNetwork ? (
@@ -415,6 +447,17 @@ export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { a
             ) : (
               <Button onClick={() => send(s)} disabled={reviewOpen}>Send with wallet</Button>
             )}
+            {/* The same deposit by hand, from any wallet: this card watches the address and continues when it arrives. */}
+            <details className="rounded-md bg-muted/50 px-3 py-2">
+              <summary className="cursor-pointer font-medium">Or send it yourself from MetaMask or Rabby</summary>
+              <div className="mt-2 space-y-1.5 text-xs">
+                <p className="text-muted-foreground">
+                  In your wallet, on <strong className="text-foreground">{origin.name}</strong>, send exactly this amount of {s.symbol} to this address. No other token, no other network. This card moves on by itself when it arrives.
+                </p>
+                <CopyRow label="Amount" value={`${formatUnits(BigInt(s.quote.amountIn), s.decimals)} ${s.symbol}`} />
+                <CopyRow label="To" value={s.quote.depositAddress!} />
+              </div>
+            </details>
             <Button size="sm" variant="ghost" onClick={startOver}>Discard this quote (only if you have not sent anything)</Button>
           </div>
         );

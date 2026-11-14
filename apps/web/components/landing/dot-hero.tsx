@@ -294,10 +294,14 @@ export function DotHero({ children }: { children: ReactNode }) {
           <div className="relative isolate flex max-w-full flex-col items-center">
             <div
               aria-hidden
-              className="pointer-events-none absolute -inset-x-10 -inset-y-10 -z-10 hidden sm:block lg:-inset-x-32"
+              className="pointer-events-none absolute -inset-x-8 -top-10 -bottom-16 -z-10 backdrop-blur-[3px] sm:-inset-x-14 lg:-inset-x-32"
               style={{
+                // A soft spotlight behind the copy: the dots fade and blur under the text (strongest at the bottom,
+                // where the buttons and chain row sit on the chart), and come back crisp at the edges.
                 background:
-                  "radial-gradient(closest-side, color-mix(in oklab, var(--color-background) 78%, transparent) 55%, color-mix(in oklab, var(--color-background) 55%, transparent) 78%, transparent)",
+                  "radial-gradient(closest-side, color-mix(in oklab, var(--color-background) 88%, transparent) 60%, color-mix(in oklab, var(--color-background) 65%, transparent) 82%, transparent)",
+                maskImage: "radial-gradient(closest-side, #000 70%, transparent)",
+                WebkitMaskImage: "radial-gradient(closest-side, #000 70%, transparent)",
               }}
             />
             {children}

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatUtc } from "@/lib/format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { useState } from "react";
@@ -14,7 +15,7 @@ const isBracket = (v: string | null): v is VolumeBracket => VOLUME_BRACKETS.some
 
 function dateText(iso: string): string {
   const t = Date.parse(iso);
-  return Number.isNaN(t) ? "" : ` on ${new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  return Number.isNaN(t) ? "" : ` on ${formatUtc(new Date(t).toISOString())}`;
 }
 
 /**

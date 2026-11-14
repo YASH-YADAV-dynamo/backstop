@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ChainBadge } from "@/components/chain-badge";
 import { explorerHost, resolveChain } from "@/lib/chain";
 import { readLoanReceipt } from "@/lib/loan-client";
-import { clearJournal, setJournalHash, startJournal } from "@/lib/pending-tx";
+import { clearJournal, loadJournal, setJournalHash, startJournal } from "@/lib/pending-tx";
 import { gasUnits } from "@/lib/policy-client";
 import { wagmiConfig } from "@/lib/wagmi";
 import type { Prepared, PreparedEvm, PreparedNear, ReviewRequest } from "@/lib/review";
@@ -94,6 +94,8 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
   const journalAccount = useRef<string | null>(null);
   const guard = useRef(createInFlightGuard());
   const attempt = useRef(0);
+  /** An earlier EVM request from this wallet that never got an answer blocks a new one: offer to clear it. */
+  const [stuck, setStuck] = useState<{ account: string; hash: string | undefined } | null>(null);
 
   const load = useCallback((): void => {
     request.prepare().then(
@@ -166,15 +168,21 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
   }
 
   function confirm() {
-    if (!ready || shown?.ok !== true) return;
+    // Every early exit says why: a click that does nothing looks like a jammed app.
+    if (shown?.ok !== true) return setNotice("Still preparing this transaction. Wait a second, then press Approve again.");
+    if (changed) return setNotice("The details changed while this window was open. Close it and start again.");
+    if (nowRefused) return setNotice("This can no longer be sent as shown. Close this window and start again.");
+    if (!ready) return setNotice(`Not ready to send (${phase.name}). Close this window and start again.`);
     const token = guard.current.begin();
-    if (token === null) return; // a second click while the wallet is open does nothing
+    // Kept as a hard stop (a double click must never open two wallet requests), but it says so.
+    if (token === null) return setNotice("Your wallet is still handling an earlier request from this window. Open MetaMask or Rabby and approve or reject it, or close this window and start again.");
     const mine = ++attempt.current;
     const startedAt = startEpochs.current;
     /** False once a newer attempt started or the account or network changed: that answer must not touch this screen. */
     const current = () => attempt.current === mine && liveEpochs.current.near === startedAt.near && liveEpochs.current.evm === startedAt.evm;
     setNotice(null);
     setSwitchTo(null);
+    setStuck(null);
     if (shown.network === "near") {
       setPhase({ name: "waiting" });
       request.beforeSend?.();
@@ -257,6 +265,8 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
     } catch (err) {
       guard.current.end(token);
       setNotice(errorText(err));
+      const earlier = loadJournal(account).entry;
+      if (earlier) setStuck({ account, hash: earlier.hash });
     }
   }
 
@@ -354,7 +364,26 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
               Your wallet will show its own prompt. Check that it shows the same contract and method. If it differs, reject it.
             </p>
           ) : null}
-          {notice ? <p role="status" className="mt-3 text-sm text-muted-foreground">{notice}</p> : null}
+          {stuck && phase.name === "reviewing" ? (
+            <div className="mt-2 space-y-2 text-sm">
+              <p className="text-muted-foreground">
+                {stuck.hash
+                  ? `An earlier transaction (${stuck.hash.slice(0, 10)}...) from this wallet was sent. Check it in your wallet's activity first.`
+                  : "An earlier request from this wallet never got an answer. If your wallet shows nothing pending, clear it and approve again."}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  clearJournal(stuck.account);
+                  setStuck(null);
+                  setNotice("Cleared. Press Approve in wallet again.");
+                }}
+              >
+                Clear it and try again
+              </Button>
+            </div>
+          ) : null}
           {switchTo !== null && phase.name === "reviewing" ? (
             <Button
               size="sm"
@@ -427,15 +456,21 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
             </p>
           ) : null}
 
+          {/* Next to the buttons, so the reason for a click that did not go through is where the user is looking. */}
+          {notice ? <p role="status" className="mt-4 rounded-md bg-muted px-3 py-2 text-sm">{notice}</p> : null}
+
           <div className="mt-5 flex flex-wrap justify-end gap-2">
             {finished || phase.name === "unknown" ? (
               <Button onClick={onClose}>Close</Button>
             ) : (
               <>
                 <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button onClick={confirm} disabled={!ready}>
-                  {phase.name === "waiting" ? "Waiting for wallet..." : phase.name === "wallet-busy" ? "Try again" : "Approve in wallet"}
-                </Button>
+                {/* Disabled only while the wallet is open; gone once the transaction is submitted (it must not be sent twice). Any other click explains itself (see confirm). */}
+                {phase.name === "evm-pending" ? null : (
+                  <Button onClick={confirm} disabled={phase.name === "waiting"}>
+                    {phase.name === "waiting" ? "Waiting for wallet..." : phase.name === "wallet-busy" ? "Try again" : "Approve in wallet"}
+                  </Button>
+                )}
               </>
             )}
           </div>

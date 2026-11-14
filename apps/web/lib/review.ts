@@ -3,6 +3,7 @@
  * (E.5 "stale state"), validates it, and returns either a refusal with a reason or the exact
  * transaction(s). Nothing here signs or sends.
  */
+import { formatUtc } from "@/lib/format";
 import { chainAddressUrl, FEE, loanChainByKey, NEAR } from "@backstop/config/registry";
 import { formatUsdc } from "@backstop/core";
 import { encodeFunctionData, formatEther, formatUnits, getAddress, parseAbi, type Address, type Hex } from "viem";
@@ -332,7 +333,7 @@ export function prepareClose(policyId: string, owner: string): Promise<Prepared>
     const readyAt = lastRequest + CLOSE_QUIET_SECS;
     const nowSecs = Math.floor(Date.now() / 1000);
     if (lastRequest > 0 && nowSecs < readyAt) {
-      return refuse(`The policy handled a request ${Math.ceil((nowSecs - lastRequest) / 60)} minutes ago. Wait until ${new Date(readyAt * 1000).toLocaleTimeString()} (one hour after the last rescue, approval or bridge request), then close.`);
+      return refuse(`The policy handled a request ${Math.ceil((nowSecs - lastRequest) / 60)} minutes ago. Wait until ${formatUtc(new Date(readyAt * 1000).toISOString())} (one hour after the last rescue, approval or bridge request), then close.`);
     }
     if (f.snap.usdcBalance > CLOSE_MAX_USDC_DUST) return refuse(`The policy still holds ${formatUsdc(f.snap.usdcBalance)} USDC. Withdraw it first, then close.`);
     const derived = f.snap.config.base_address;
@@ -462,7 +463,7 @@ export function prepareFundSend(sender: { address: Address; chainId: number | un
       fingerprint: `f|${input.depositAddress}|${input.amount}`,
       sentence: `Send ${human} on ${input.chainName} from ${sender.address} to the 1Click deposit address; it arrives in ${input.policyId} as NEAR USDC`,
       dangers: [`Send exactly ${human} on ${input.chainName}. A different token, another chain, or a late deposit can lose funds or trigger a refund.`],
-      notes: [`Deposit address valid until ${new Date(input.deadline).toUTCString()}.`],
+      notes: [`Deposit address valid until ${formatUtc(input.deadline)}.`],
     };
     // The registry knows explorers only for loan chains; for any other origin chain the wallet shows its own.
     const originChain = resolveChain(input.chainId);

@@ -97,7 +97,12 @@ export function PolicyProvider({ children }: { children: ReactNode }) {
     },
     [saved, store],
   );
-  const openReview = useCallback((request: ReviewRequest) => setReview((cur) => (cur ? cur : { id: Date.now(), policyId, request })), [policyId]);
+  // One review at a time, but a hidden review left over from another policy (or from before a vault existed) must not
+  // swallow the next one: only a review for the CURRENT policy blocks a new request.
+  const openReview = useCallback(
+    (request: ReviewRequest) => setReview((cur) => (cur && cur.policyId === policyId ? cur : { id: Date.now(), policyId, request })),
+    [policyId],
+  );
   const closeReview = useCallback(() => setReview(null), []);
 
   // A review belongs to the policy it was opened for: switching policy closes it.
