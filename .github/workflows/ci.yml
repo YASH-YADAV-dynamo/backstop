@@ -51,3 +51,32 @@ jobs:
       # cargo build (--cfg near) + wasm-opt -Oz + import check; prints size and sha256 (code hash).
       - run: pnpm contract:build
         working-directory: .
+
+  factory:
+    name: Factory contract (cargo test + wasm build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            contracts/policy
+            contracts/factory
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The factory embeds the policy wasm (include_bytes!): build the policy first.
+      - run: pnpm policy:build
+      - run: cargo test
+        working-directory: contracts/factory
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: contracts/factory
+      # Policy + factory wasm (--cfg near, wasm-opt, import + embed checks); prints sizes and sha256 of both.
+      - run: pnpm factory:build
