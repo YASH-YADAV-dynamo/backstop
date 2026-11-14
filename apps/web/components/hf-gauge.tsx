@@ -82,7 +82,7 @@ export function HfGauge({ hf, trigger, target, rescuing = false, staleLabel }: P
       role="img"
       aria-label={`Health ${hf === null ? "not applicable, no debt" : formatHf(hf)}. ${zone.label}.${staleLabel ? ` ${staleLabel}.` : ""}`}
     >
-      <path d={arc(0, 1)} fill="none" stroke="var(--color-muted)" strokeWidth={STROKE} strokeLinecap="round" />
+      <path d={arc(0, 1)} fill="none" stroke="var(--color-muted)" strokeWidth={STROKE} />
       <path d={arc(0, t(1))} fill="none" stroke="var(--color-danger)" strokeOpacity={0.85} strokeWidth={STROKE} />
       {amberEnd > 1 && <path d={arc(t(1), t(amberEnd))} fill="none" stroke="var(--color-warn)" strokeOpacity={0.85} strokeWidth={STROKE} />}
       <path d={arc(t(amberEnd), 1)} fill="none" stroke="var(--color-safe)" strokeOpacity={0.85} strokeWidth={STROKE} />
