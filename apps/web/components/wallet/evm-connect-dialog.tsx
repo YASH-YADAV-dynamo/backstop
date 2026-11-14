@@ -16,7 +16,21 @@ const INSTALL_LINKS = [
   { name: "Coinbase Wallet", href: "https://www.coinbase.com/wallet" },
 ] as const;
 
-export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function EvmConnectDialog({
+  open,
+  onOpenChange,
+  onConnected,
+  only,
+  description = "Used to read your address and to send only what you approve in your wallet. Backstop never asks for a key or a seed phrase.",
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Runs after the wallet connected, before the dialog closes. */
+  onConnected?: () => void;
+  /** Show only wallets whose name matches (e.g. /metamask|rabby/i); install links are narrowed the same way. */
+  only?: RegExp;
+  description?: string;
+}) {
   const connectors = useConnectors();
   const { mutate: connect, reset, isPending, variables } = useConnect();
   const [message, setMessage] = useState<string | null>(null);
@@ -38,7 +52,11 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   // Row 9: list each EIP-6963 wallet by its announced name and icon; the bare `window.ethereum`
   // connector is only offered when no wallet announced itself (it belongs to whichever extension won the race).
-  const list = useMemo(() => evmWalletChoices(connectors, hasBareProvider), [connectors, hasBareProvider]);
+  const list = useMemo(() => {
+    const all = evmWalletChoices(connectors, hasBareProvider);
+    return only ? all.filter((c) => only.test(c.name)) : all;
+  }, [connectors, hasBareProvider, only]);
+  const installLinks = only ? INSTALL_LINKS.filter((l) => only.test(l.name)) : INSTALL_LINKS;
 
   const noWallet = list.length === 0;
 
@@ -53,6 +71,7 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
       {
         onSuccess: () => {
           if (!guard.current.end(token)) return;
+          onConnected?.();
           onOpenChange(false);
         },
         onError: (err) => {
@@ -88,9 +107,9 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border bg-popover p-5 text-popover-foreground shadow-xl">
-          <Dialog.Title className="text-base font-semibold">Connect an EVM wallet</Dialog.Title>
+          <Dialog.Title className="text-base font-semibold">{only ? `Connect ${installLinks.map((l) => l.name).join(" or ")}` : "Connect a wallet"}</Dialog.Title>
           <Dialog.Description className="mt-1 text-sm text-muted-foreground">
-            Used only to read your address and to send ETH for gas on the chain your loan lives on. Backstop never asks for a key or a seed phrase.
+            {description}
           </Dialog.Description>
 
           <ul className="mt-4 space-y-2">
@@ -120,10 +139,10 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
 
           {noWallet || list.every((c) => c.type !== "injected") ? (
             <div className="mt-4 rounded-lg border border-dashed p-3 text-sm">
-              <p className="font-medium">No browser wallet found</p>
-              <p className="mt-1 text-muted-foreground">Install one, then reload this page:</p>
+              <p className="font-medium">{only ? `${installLinks.map((l) => l.name).join(" or ")} not found in this browser` : "No browser wallet found"}</p>
+              <p className="mt-1 text-muted-foreground">{only && connectors.some((c) => c.type === "injected" && c.id !== "injected") ? "Another wallet is installed, but it is not supported here. Install one of these, then reload this page:" : "Install one, then reload this page:"}</p>
               <ul className="mt-2 flex flex-wrap gap-2">
-                {INSTALL_LINKS.map((l) => (
+                {installLinks.map((l) => (
                   <li key={l.name}>
                     <a href={l.href} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-muted">
                       {l.name} <ExternalLink className="size-3" aria-hidden />
@@ -142,10 +161,13 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
                   <p className="mt-2 text-xs text-muted-foreground">
                     Opened your wallet? Continue there. This tab can be closed.
                   </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Using Rabby on a phone? We can only open MetaMask for you. Open this page from the browser inside the Rabby app, or use a computer.
+                  </p>
                 </div>
               ) : null}
               <p className="mt-3 text-xs text-muted-foreground">
-                Or close this and choose &quot;Enter an address instead&quot; to look around read-only.
+                No wallet? Close this and type your loan address by hand. A wallet is only needed to send.
               </p>
             </div>
           ) : null}

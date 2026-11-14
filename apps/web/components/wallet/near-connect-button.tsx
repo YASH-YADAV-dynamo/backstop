@@ -4,13 +4,14 @@ import { Loader2, LogOut, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNear } from "@/components/wallet/near-provider";
 
+/** Connect the NEAR wallet that owns the vault. Paying from an EVM wallet is offered later, at the deposit. */
 export function NearConnectButton() {
   const { state, connect, connectPhase, resetConnect, disconnect } = useNear();
-  if (state.status === "loading") return <Button variant="outline" disabled>Loading wallets...</Button>;
+  if (state.status === "loading") return <Button variant="outline" disabled className="shimmer">Loading wallets...</Button>;
   if (state.status === "signed-in") {
     return (
       <Button variant="outline" onClick={() => void disconnect()}>
-        <LogOut /> Disconnect NEAR wallet
+        <LogOut /> Disconnect
       </Button>
     );
   }
@@ -32,7 +33,7 @@ export function NearConnectButton() {
     );
   }
   return (
-    <Button onClick={connect}>
+    <Button size="lg" onClick={() => connect()}>
       <Wallet /> {state.error ? "Try again" : "Connect NEAR wallet"}
     </Button>
   );

@@ -85,7 +85,7 @@ export function createBlockReason(i: CreateInputs): string | null {
   const address = parseEvmAddress(i.loanAddress);
   if (!address.ok) return i.loanAddress.trim() === "" ? "Enter the address that holds your Aave loan." : address.error;
   if (i.debtKind === null) return `Looking for your loan on ${i.chainName}...`;
-  const debt = debtBlockReason(i.debtKind, i.chainName);
+  const debt = debtBlockReason(i.debtKind);
   if (debt) return debt;
   const limits = buildCreateLimits(i.fields);
   if (!limits.ok) return limits.error;

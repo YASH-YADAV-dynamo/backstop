@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInFlightGuard, ethereumWalletNearHint, evmWalletChoices, interpretNearError, interpretNearOutcomes, isEthereumNearAccount } from "@/lib/wallet-flow";
+import { createInFlightGuard, ethereumWalletNearHint, evmWalletChoices, interpretNearError, interpretNearOutcomes, isEthereumNearAccount, PENDING_MAX_FAILURES, pendingGivesUp, wrongNetworkMessage } from "@/lib/wallet-flow";
 
 const H1 = "6mGxN1nBX3rBk8V8Q5mPf3RSCcWZtD8fXqZxWQ3qeCnP";
 const H2 = "9QqUfpGtVVkGGdXJyWbGd2rpE1rHMhpM3yDYoU8gRXWv";
@@ -107,5 +107,19 @@ describe("NEAR accounts from an Ethereum wallet", () => {
     expect(ethereumWalletNearHint({ walletName: "HOT", accountId: "alice.near", needYocto: 3n * NEAR, haveYocto: 0n })).toBeNull();
     expect(ethereumWalletNearHint({ walletName: "Ethereum Wallets", accountId: eth, needYocto: NEAR, haveYocto: NEAR })).toBeNull();
     expect(ethereumWalletNearHint({ walletName: "Ethereum Wallets", accountId: eth, needYocto: NEAR, haveYocto: null })).toBeNull();
+  });
+});
+
+describe("wrong network and retry cap", () => {
+  it("names both networks and never shows a chain id", () => {
+    const text = wrongNetworkMessage("Ethereum", "Base");
+    expect(text).toContain("Your wallet is on Ethereum");
+    expect(text).toContain("Switch to Base");
+    expect(wrongNetworkMessage(null, "Base")).toContain("another network");
+    expect(wrongNetworkMessage(null, "Base")).not.toMatch(/\d/);
+  });
+  it("the create card stops retrying on its own after a fixed number of failures in a row", () => {
+    expect(pendingGivesUp(PENDING_MAX_FAILURES - 1)).toBe(false);
+    expect(pendingGivesUp(PENDING_MAX_FAILURES)).toBe(true);
   });
 });

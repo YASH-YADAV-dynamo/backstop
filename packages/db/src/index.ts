@@ -37,3 +37,12 @@ export {
   type VaultStatusStore,
 } from "./vault-status.js";
 export { acquireInstanceLock, acquireFileLock, acquirePgLock, SERVICE_LOCK_KEY, type InstanceLock } from "./instance-lock.js";
+export {
+  inviteRequestSchema,
+  JsonInviteRequestStore,
+  PostgresInviteRequestStore,
+  openInviteRequestStore,
+  type InviteRequest,
+  type InviteRequestStore,
+  type NewInviteRequest,
+} from "./invite-requests.js";

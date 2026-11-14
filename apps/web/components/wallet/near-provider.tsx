@@ -32,8 +32,11 @@ export type ConnectPhase = "idle" | "waiting" | "slow";
 
 type NearContextValue = {
   state: NearState;
-  /** Opens the wallet picker. Call it directly from a click handler. A second call while one is open does nothing. */
-  connect: () => void;
+  /**
+   * Opens the wallet picker, or goes straight to one wallet when `walletId` is given (its NEAR Connect manifest id).
+   * Call it directly from a click handler. A second call while one is open does nothing.
+   */
+  connect: (walletId?: string) => void;
   connectPhase: ConnectPhase;
   /** Stop waiting for a connect that never answered. The wallet may still show the old request. */
   resetConnect: () => void;
@@ -103,8 +106,9 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
         // required: on 2026-11-13 the manifest sets it for only 5 of 13 wallets and the connector does
         // not need it on mainnet, so requiring it hid HOT, MyNearWallet, Intear, OKX and others.
         features: { signAndSendTransaction: true, signInWithoutAddKey: true },
-        // "Ethereum Wallets" (NEAR account from an EVM address) stays listed (D22). Whether such accounts
-        // can attach 1 yocto and pay gas for owner calls is UNVERIFIED (U11): docs claim nothing until tested.
+        // "Ethereum Wallets" (NEAR account from an EVM address) is hidden: its sign-in did not work in testing
+        // (2026-11-14). EVM users pay the deposit from MetaMask or Rabby in the create card instead.
+        excludedWallets: ["ethereum-wallets"],
         autoConnect: true,
       });
       connectorRef.current = connector;
@@ -118,6 +122,9 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
         // No remembered wallet, or it no longer has an account: start signed out.
         if (!cancelled) setState((s) => (s.status === "loading" ? { status: "signed-out" } : s));
       }
+    }).catch(() => {
+      // The wallet library itself failed to load (network or blocked script): never leave "Loading wallets..." up.
+      if (!cancelled) setState({ status: "signed-out", error: "Could not load the wallet list. Check your connection, then reload this page." });
     });
     return () => {
       cancelled = true;
@@ -125,7 +132,7 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
     };
   }, [applyAccount]);
 
-  const connect = useCallback(() => {
+  const connect = useCallback((walletId?: string) => {
     const connector = connectorRef.current;
     if (!connector) {
       setState({ status: "signed-out", error: "The wallet list is still loading. Wait a second, then press Try again." });
@@ -139,8 +146,8 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
     connectTimer.current = setTimeout(() => {
       if (connectGuard.current.holds(token)) setConnectPhase("slow");
     }, WALLET_STALL_MS);
-    // Called synchronously from the click; the connector opens its own picker.
-    connector.connect().then(
+    // Called synchronously from the click; the connector opens its own picker (or the named wallet).
+    connector.connect(walletId ? { walletId } : undefined).then(
       () => {
         if (!connectGuard.current.end(token)) return;
         clearTimer(connectTimer);

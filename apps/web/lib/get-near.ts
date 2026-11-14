@@ -16,6 +16,11 @@ export const getNearEnabled = (env: { getNearEnabled: boolean } = PUBLIC_ENV): b
 
 /** After this long since sending without the NEAR arriving, show the support details. */
 export const STUCK_MS = 30 * 60_000;
+/**
+ * A swap the service reported as delivered this long ago is over. If the account is short of NEAR again after that
+ * (the NEAR was spent, for example on an earlier vault), the card starts a new quote instead of waiting for the old one.
+ */
+export const DELIVERED_DONE_MS = 24 * 3_600_000;
 /** Remembered swaps older than this are dropped. */
 export const SAVED_MAX_AGE_MS = 7 * 24 * 3_600_000;
 
@@ -176,6 +181,7 @@ export function deriveTopUp(i: TopUpInput): TopUpView {
       return { kind: "unwrap", amount, canPayGas: (i.nativeYocto ?? 0n) >= NEAR_TOPUP_LIMITS.unwrapGasMinYocto };
     }
     if (i.nativeYocto !== null && i.nativeYocto > BigInt(s.startNative)) return { kind: "short", stuck };
+    if (i.nowMs - (s.sentAt ?? s.createdAt) > DELIVERED_DONE_MS && (delivery !== "wrapped" || i.wrappedYocto !== null)) return { kind: "quote" };
     return { kind: "swapping", stuck, delivered: true };
   }
   return { kind: "swapping", stuck, delivered: false };
@@ -232,8 +238,17 @@ export function durationText(seconds: number): string {
 }
 
 /** POST /api/near-topup/quote. */
+/** A quote request that takes longer than this is abandoned (the server's own 1Click call gives up at 20 s). */
+export const QUOTE_TIMEOUT_MS = 30_000;
+
 export async function requestTopUpQuote(req: TopUpRequest): Promise<TopUpQuoteView> {
-  const res = await fetch("/api/near-topup/quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req), cache: "no-store" });
+  let res: Response;
+  try {
+    res = await fetch("/api/near-topup/quote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req), cache: "no-store", signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS) });
+  } catch (err) {
+    if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) throw new Error("The swap service did not answer in time. Nothing was sent. Press Get a quote again.");
+    throw err;
+  }
   const json: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     const message = z.object({ error: z.string() }).safeParse(json);

@@ -13,6 +13,7 @@ import {
   savedTopUpKey,
   shouldReset,
   statusKind,
+  DELIVERED_DONE_MS,
   STUCK_MS,
   topUpTarget,
   withTxHash,
@@ -70,7 +71,7 @@ describe("flag OFF (default): the app behaves as before", () => {
     expect(getNearEnabled({ getNearEnabled: true })).toBe(true);
   });
 
-  it("the Ethereum-wallet hint keeps today's text when off, and points to Get NEAR when on", () => {
+  it("the Ethereum-wallet hint keeps today's text when off, and points to the MetaMask / Rabby tab when on", () => {
     const eth = "0x" + "ab".repeat(20);
     const input = { walletName: "Ethereum Wallets", accountId: eth, needYocto: 3n * NEAR, haveYocto: NEAR };
     const off = ethereumWalletNearHint(input);
@@ -79,7 +80,7 @@ describe("flag OFF (default): the app behaves as before", () => {
       `Your NEAR account comes from an Ethereum wallet. This step needs about 3 NEAR in NEAR itself; ETH or USDC in that wallet cannot pay it. Send at least 2 NEAR to ${eth} (for example from an exchange), then try again.`,
     );
     const on = ethereumWalletNearHint(input, true);
-    expect(on).toContain('"Get NEAR"');
+    expect(on).toContain('"MetaMask / Rabby" tab');
     expect(on).toContain("at least 2 NEAR");
     expect(ethereumWalletNearHint({ ...input, haveYocto: 3n * NEAR }, true)).toBeNull();
   });
@@ -152,6 +153,16 @@ describe("which step the card shows", () => {
     const v = deriveTopUp({ ...base, saved: saved({ txHash: "0xabc", sentAt: NOW }), nativeYocto: NEAR / 10n, status: "SUCCESS", wrappedYocto: 0n });
     expect(v).toEqual({ kind: "swapping", stuck: false, delivered: true });
     expect(progressIndex(v)).toBe(2);
+  });
+
+  it("a swap delivered long ago is over: short of NEAR again, the card offers a new quote instead of waiting forever", () => {
+    const old = saved({ txHash: "0xabc", sentAt: NOW });
+    const later = NOW + DELIVERED_DONE_MS + 1;
+    expect(deriveTopUp({ ...base, saved: old, nativeYocto: NEAR / 10n, status: "SUCCESS", wrappedYocto: 0n, nowMs: later }).kind).toBe("quote");
+    expect(deriveTopUp({ ...base, saved: old, nativeYocto: NEAR / 10n, status: "SUCCESS", wrappedYocto: 0n, nowMs: NOW + DELIVERED_DONE_MS - 1 }).kind).toBe("swapping");
+    // Not while the swap itself is still running, and never before a wrapped balance was read.
+    expect(deriveTopUp({ ...base, saved: old, nativeYocto: 0n, status: "PROCESSING", nowMs: later }).kind).toBe("swapping");
+    expect(deriveTopUp({ ...base, saved: old, nativeYocto: NEAR / 10n, status: "SUCCESS", wrappedYocto: null, delivery: "wrapped", nowMs: later }).kind).toBe("swapping");
   });
 
   it("wNEAR arrived: unwrap the delivered amount (not more), and say when gas is missing", () => {

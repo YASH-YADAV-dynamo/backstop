@@ -36,3 +36,12 @@ docs/contract-notes.md
 vault-status.json
 vault-status.json.lock
 .neon
+
+# deploy env files (created on the host, never committed)
+.env.bot
+.env.web
+!.env.bot.example
+!.env.web.example
+
+# invite requests (JSON fallback when DATABASE_URL is unset)
+invite-requests.json

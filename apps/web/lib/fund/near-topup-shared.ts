@@ -142,7 +142,9 @@ export function checkTopUpQuote(
     const ms = typeof d === "string" ? Date.parse(d) : NaN;
     if (!Number.isFinite(ms)) bad.push("deadline missing");
     else if (ms <= nowMs + 5 * 60_000) bad.push("the deposit address expires too soon (request a new quote)");
-    else if (ms > nowMs + 24 * 3_600_000) bad.push("deadline is unexpectedly far away");
+    // 1Click ignores the requested 30 min and signs its own deposit window (72 h, measured 2026-11-14).
+    // Anything past 7 days (how long a saved swap is kept) is still treated as wrong.
+    else if (ms > nowMs + 7 * 24 * 3_600_000) bad.push("deadline is unexpectedly far away");
     else deadline = d as string;
   }
 

@@ -517,7 +517,7 @@ export function prepareCreateVault(owner: string, input: CreateVaultInput): Prom
     const chain = loanChainByKey(body.chainKey);
     const [debt, account, requests, taken] = await Promise.all([readDebt(chain, getAddress(body.borrower)), viewAccount(owner), fetchOwnerRequests(owner), viewAccount(body.vaultId)]);
     if (taken !== null) return refuse("This vault name is already taken. Close this window and press Create again for a new one.");
-    const blocked = debtBlockReason(debt.kind, chain.name);
+    const blocked = debtBlockReason(debt.kind);
     if (blocked) return refuse(blocked);
     const open = requests.filter((r) => r.status !== "failed" && r.status !== "aborted");
     if (open.length >= MAX_VAULTS) return refuse(`You've reached the limit of ${MAX_VAULTS} vaults. Close one to open another.`);

@@ -42,6 +42,7 @@ import {
 } from "@/lib/get-near";
 import { prepareTopUpSend, prepareUnwrap, readOriginBalances, readWrappedNear, unwrapGasMessage } from "@/lib/get-near-review";
 import { useLocalString } from "@/lib/use-client";
+import { cn } from "@/lib/utils";
 import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
 
 const origin = NEAR_TOPUP_ORIGINS[0]!;
@@ -50,15 +51,35 @@ const stamp = () => Date.now();
 
 type Offer = { quote: TopUpQuoteView; req: TopUpRequest; symbol: string; decimals: number; contract: string | null; takenAt: number; epoch: number };
 
-function Progress({ at }: { at: number }) {
+/** Small stepper: dots joined by a line that fills as the swap moves on. `working`: the current step is waiting on the network. */
+function Progress({ at, working }: { at: number; working: boolean }) {
+  const last = PROGRESS.length - 1;
   return (
-    <ol className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" aria-label="Progress">
-      {PROGRESS.map((label, i) => (
-        <li key={label} className={i <= at ? "flex items-center gap-1 font-medium" : "flex items-center gap-1 text-muted-foreground"}>
-          {i < at ? <Check className="size-3 text-safe" aria-hidden /> : i === at ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
-          {label}
-        </li>
-      ))}
+    <ol className="flex items-center text-xs" aria-label="Progress">
+      {PROGRESS.map((label, i) => {
+        const done = i < at || at === last;
+        const current = i === at && !done;
+        return (
+          <li key={label} aria-current={current ? "step" : undefined} className={cn("flex items-center", i < last && "flex-1")}>
+            <span
+              className={cn(
+                "flex size-5 shrink-0 items-center justify-center rounded-full border text-[0.625rem] font-semibold transition-colors duration-300",
+                done && "border-primary bg-primary text-primary-foreground",
+                current && "dot-halo border-primary bg-primary/15 text-primary",
+                !done && !current && "border-border text-muted-foreground",
+              )}
+            >
+              {done ? <Check key="done" className="check-pop size-3" aria-hidden /> : current && working ? <Loader2 className="size-3 animate-spin" aria-hidden /> : i + 1}
+            </span>
+            <span className={cn("ml-1.5 transition-colors duration-300", current ? "font-medium" : done ? "hidden text-foreground/80 sm:inline" : "hidden text-muted-foreground sm:inline")}>{label}</span>
+            {i < last ? (
+              <span className="mx-2 h-0.5 min-w-3 flex-1 overflow-hidden rounded-full bg-border" aria-hidden>
+                <span className={cn("block h-full origin-left bg-primary transition-transform duration-500 ease-out motion-reduce:transition-none", i < at ? "scale-x-100" : "scale-x-0")} />
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -87,7 +108,7 @@ function SupportDetails({ saved, open }: { saved: SavedTopUp; open: boolean }) {
 }
 
 /** `needYocto`: NEAR the account must hold to create a vault (deposit + wallet gas). `nativeYocto`: its NEAR now (null until read). */
-export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: string; needYocto: bigint; nativeYocto: bigint | null }) {
+export function GetNear({ accountId, needYocto, nativeYocto, bare = false }: { accountId: string; needYocto: bigint; nativeYocto: bigint | null; /** Inside the create card's "Pay with" tabs: no own frame or heading. */ bare?: boolean }) {
   const queryClient = useQueryClient();
   const { identity, epoch } = useEvmIdentity();
   const { openReview, reviewOpen } = usePolicyContext();
@@ -99,6 +120,8 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
   const [assetId, setAssetId] = useState<string>(origin.assets[0]!.assetId);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Which part of getting a quote is running, shown on the button. */
+  const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const epochRef = useRef(epoch);
   useEffect(() => {
@@ -130,7 +153,8 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
 
   const balances = useQuery({
     queryKey: ["topup-balances", origin.key, evmAddress],
-    enabled: evmAddress !== null && saved === null,
+    // Also read while an old, finished swap is remembered: the card then offers a new quote.
+    enabled: evmAddress !== null,
     queryFn: () => readOriginBalances(origin, evmAddress!),
     staleTime: 15_000,
   });
@@ -169,6 +193,15 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
   if (view.kind === "hidden") return null;
 
   const short = topUpTarget(needYocto, nativeYocto);
+  const wrongNetwork = identity.mode === "wallet" && identity.chainId !== origin.evmChainId;
+  const switchButton = (
+    <Button
+      disabled={switching}
+      onClick={() => switchChain({ chainId: origin.evmChainId as 8453 }, { onError: (e) => setError(walletErrorMessage(e, "Your wallet would not switch", "the switch button again").message) })}
+    >
+      {switching ? "Check your wallet..." : `Switch to ${origin.name}`}
+    </Button>
+  );
   const startOver = () => {
     setRaw(null);
     setOffer(null);
@@ -183,6 +216,7 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
     setBusy(true);
     try {
       const base = { originChain: origin.key, originAsset: asset.assetId, recipient: accountId, refundTo: evmAddress };
+      setPhase("Checking the price...");
       const probe = await requestTopUpQuote({ ...base, amount: asset.probeAmount, dry: true });
       const probeNums = { amountIn: BigInt(probe.amountIn), amountOut: BigInt(probe.amountOut), amountInUsd: probe.amountInUsd };
       const amountIn = amountInForTarget(short.targetYocto, probeNums);
@@ -195,8 +229,10 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
         throw new Error(`This needs about ${tokenText(amountIn, asset.decimals, asset.symbol)}${asset.contract ? "" : " plus network fees"}; your wallet holds ${tokenText(held, asset.decimals, asset.symbol)} on ${origin.name}. Pick the other token or add funds.`);
       }
       const req: TopUpRequest = { ...base, amount: amountIn.toString() };
+      setPhase("Getting your quote...");
       const quote = await requestTopUpQuote(req);
       const takenAt = stamp();
+      setPhase("Checking the signed quote...");
       const check = await verifyTopUpInBrowser(quote, req, needYocto, takenAt);
       if (!check.ok) throw new Error(check.reason);
       if (BigInt(quote.minAmountOut) < short.shortYocto) {
@@ -210,6 +246,7 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
       setError(errorText(err));
     } finally {
       setBusy(false);
+      setPhase(null);
     }
   }
 
@@ -275,8 +312,10 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
         if (identity.mode !== "wallet") {
           return (
             <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Connect the Ethereum wallet that holds USDC or ETH on {origin.name}.</p>
-              <ConnectWalletButton variant="outline" />
+              <p className="text-sm text-muted-foreground">
+                Connect the wallet that holds USDC or ETH on {origin.name}. You swap just enough of it into NEAR, sent straight to your own account, {accountId}.
+              </p>
+              <ConnectWalletButton label="Connect MetaMask or Rabby" />
             </div>
           );
         }
@@ -284,7 +323,7 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
           const offer = liveOffer;
           const q = offer.quote;
           return (
-            <div className="space-y-3">
+            <div className="step-in space-y-3">
               <dl className="divide-y rounded-lg border text-sm">
                 {[
                   ["You send", `${tokenText(BigInt(q.amountIn), offer.decimals, offer.symbol, 8)} on ${origin.name} (about ${usdText(q.amountInUsd)})`],
@@ -311,6 +350,11 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
         }
         return (
           <div className="space-y-3">
+            {offer && !liveOffer ? (
+              <p role="status" className="text-sm text-warn">
+                Your wallet changed account or network, so that quote was dropped. Nothing was sent.
+              </p>
+            ) : null}
             {short && short.shortYocto > 0n ? (
               <p className="text-sm">
                 You need about <strong>{nearText(short.shortYocto, 3)}</strong> more. We ask the swap for {nearText(short.targetYocto, 3)} (5% extra covers the spread).
@@ -328,10 +372,20 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
                 );
               })}
             </div>
-            {honest}
-            <Button onClick={() => void getQuote()} disabled={busy || reviewOpen}>
-              {busy ? "Getting a quote..." : "Get a quote"}
-            </Button>
+            {wrongNetwork ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">Your wallet is on another network. Switch it to {origin.name} first.</p>
+                {switchButton}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Button onClick={() => void getQuote()} disabled={busy || reviewOpen}>
+                  {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                  {busy ? (phase ?? "Getting a quote...") : "Get a quote"}
+                </Button>
+                <p className="text-xs text-muted-foreground">Nothing is sent yet: you see the exact amounts first, then approve in your wallet.</p>
+              </div>
+            )}
           </div>
         );
       }
@@ -353,16 +407,11 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
             <p>
               Send {tokenText(BigInt(s.quote.amountIn), s.decimals, s.symbol, 8)} on {origin.name} from your wallet. You receive at least {nearText(BigInt(s.quote.minAmountOut), 4)} in {accountId}.
             </p>
-            <p className="text-xs text-muted-foreground">This quote is valid for {Math.floor(remaining / 60)}m {remaining % 60}s.</p>
+            <p className="text-xs text-muted-foreground">This quote is valid for {remaining >= 3600 ? `${Math.floor(remaining / 3600)}h ${Math.floor((remaining % 3600) / 60)}m` : `${Math.floor(remaining / 60)}m ${remaining % 60}s`}.</p>
             {identity.mode !== "wallet" ? (
-              <ConnectWalletButton />
-            ) : identity.chainId !== origin.evmChainId ? (
-              <Button
-                disabled={switching}
-                onClick={() => switchChain({ chainId: origin.evmChainId as 8453 }, { onError: (e) => setError(walletErrorMessage(e, "Your wallet would not switch", "the switch button again").message) })}
-              >
-                {switching ? "Check your wallet..." : `Switch to ${origin.name} to send`}
-              </Button>
+              <ConnectWalletButton label="Connect MetaMask or Rabby" />
+            ) : wrongNetwork ? (
+              switchButton
             ) : (
               <Button onClick={() => send(s)} disabled={reviewOpen}>Send with wallet</Button>
             )}
@@ -379,12 +428,17 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
         );
       case "swapping":
         return (
-          <div className="space-y-2 text-sm" aria-live="polite">
-            <p className="flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              {view.delivered ? "The swap finished. Waiting for the NEAR to show in your account..." : statusValue === null || statusValue === "PENDING_DEPOSIT" ? "Waiting for your deposit to confirm..." : "Swapping into NEAR..."}
-            </p>
-            <p className="text-xs text-muted-foreground">You can leave this page; this card picks the swap up when you come back.</p>
+          <div className="step-in space-y-2 text-sm" aria-live="polite">
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="flex items-center gap-2 font-medium">
+                <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                {view.delivered ? "The swap finished. Waiting for the NEAR to show in your account..." : statusValue === null || statusValue === "PENDING_DEPOSIT" ? "Waiting for your deposit to confirm..." : "Swapping into NEAR..."}
+              </p>
+              <div className="shimmer mt-2 h-1 rounded-full bg-border" aria-hidden />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {view.delivered ? "Almost done." : statusValue === null || statusValue === "PENDING_DEPOSIT" ? `Step 1 of 2: your ${origin.name} transaction is confirming.` : "Step 2 of 2: the swap is running. This usually takes under a minute."} Nothing to do: this updates on its own, and you can leave and come back.
+              </p>
+            </div>
             {status.isError ? <p className="text-xs text-warn">Could not read the swap status ({errorText(status.error)}). Retrying.</p> : null}
             {view.stuck ? (
               <p role="alert" className="text-warn">
@@ -427,9 +481,28 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
         );
       case "arrived":
         return (
-          <div className="space-y-2 text-sm">
-            <p className="font-medium text-safe">Your NEAR arrived. Your account now has {nativeYocto !== null ? nearText(nativeYocto, 3) : "enough"}.</p>
-            <Button onClick={startOver}>Continue to create vault</Button>
+          <div role="status" className="step-in space-y-3 rounded-lg border border-safe/40 bg-safe-bg p-4 text-sm">
+            <div className="flex items-start gap-3">
+              <span className="check-pop flex size-8 shrink-0 items-center justify-center rounded-full bg-safe text-background">
+                <Check className="size-5" aria-hidden />
+              </span>
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-semibold">Your NEAR arrived</p>
+                <p className="text-muted-foreground">Your account now has {nativeYocto !== null ? nearText(nativeYocto, 3) : "enough"}. The deposit is covered.</p>
+              </div>
+            </div>
+            <p className="font-medium">Now press Create vault.</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const button = document.getElementById("create-vault-button");
+                button?.scrollIntoView({ block: "center" });
+                button?.focus({ preventScroll: true });
+              }}
+            >
+              Go to Create vault
+            </Button>
           </div>
         );
       case "refunded":
@@ -459,12 +532,14 @@ export function GetNear({ accountId, needYocto, nativeYocto }: { accountId: stri
   })();
 
   return (
-    <section aria-label="Get NEAR" className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
-      <div className="space-y-1">
-        <p className="text-base font-semibold">Get NEAR</p>
-        <p className="text-sm text-muted-foreground">Swap USDC or ETH on {origin.name} into NEAR for your own account, {accountId}. Nobody else holds it on the way.</p>
-      </div>
-      <Progress at={progressIndex(view)} />
+    <section aria-label="Get NEAR" className={bare ? "space-y-3 break-words" : "space-y-3 break-words rounded-lg border border-primary/30 bg-primary/5 p-4"}>
+      {bare ? null : (
+        <div className="space-y-1">
+          <p className="text-base font-semibold">Get NEAR</p>
+          <p className="text-sm text-muted-foreground">Swap USDC or ETH on {origin.name} into NEAR for your own account, {accountId}. Nobody else holds it on the way.</p>
+        </div>
+      )}
+      <Progress at={progressIndex(view)} working={busy || view.kind === "swapping"} />
       {walletChanged ? (
         <div role="status" className="space-y-2 text-sm">
           <p>Your wallet account changed, so this quote was cancelled: its refunds would go to the previous account. Nothing was sent.</p>

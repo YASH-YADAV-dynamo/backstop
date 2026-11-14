@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { EvmConnectDialog } from "@/components/wallet/evm-connect-dialog";
 import { NearConnectButton } from "@/components/wallet/near-connect-button";
 import { useNear } from "@/components/wallet/near-provider";
+import { WalletArt } from "@/components/app/vault-art";
+import { createDeposit, nearText } from "@/lib/create-vault";
+import { getNearEnabled } from "@/lib/get-near";
+import { PUBLIC_ENV } from "@/lib/public-env";
 
 /** Step 1. Signed out it is the open step; signed in it is one line with "Change". */
 export function NearStep() {
@@ -17,34 +21,54 @@ export function NearStep() {
   const [editing, setEditing] = useState(false);
   if (state.status === "signed-in") {
     return (
-      <DoneLine open={editing} onChange={() => setEditing((e) => !e)} panel={<NearConnectButton />}>
+      <DoneLine open={editing} onChange={() => setEditing((e) => !e)} panel={<><p className="text-muted-foreground">Disconnect to use another NEAR account. A vault belongs to the account that created it.</p><NearConnectButton /></>}>
         Connected as <code className="font-mono text-foreground">{state.accountId}</code>
       </DoneLine>
     );
   }
+  const deposit = createDeposit(PUBLIC_ENV.policyCodeBytes);
+  const needs = [
+    "A NEAR wallet. New to NEAR? Pick a wallet in the list and it helps you create an account.",
+    "The address of your Aave loan on Base or Arbitrum.",
+    (deposit !== null ? "A refundable deposit of about " + nearText(deposit, 2) + "." : "A refundable deposit in NEAR.") + (getNearEnabled() ? " You can pay it with USDC or ETH on Base from MetaMask or Rabby." : ""),
+  ];
   return (
-    <StepCard title="Connect your NEAR wallet" description="Your NEAR account owns your Rescue vault.">
+    <StepCard title="Connect wallet" description="Your NEAR account owns the vault. Only it can withdraw." art={<WalletArt className="h-20 w-28 shrink-0 sm:h-24 sm:w-32" />}>
       {state.status === "signed-out" && state.error ? (
         <p role="alert" className="text-sm text-danger">
           {state.error}
         </p>
       ) : null}
       <NearConnectButton />
+      <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What you need</p>
+        <ol className="space-y-2 text-sm text-muted-foreground">
+          {needs.map((text, i) => (
+            <li key={text} className="flex gap-3">
+              <span className="flex size-5 shrink-0 items-center justify-center rounded-full border text-[0.6875rem] font-medium text-foreground">{i + 1}</span>
+              <span>{text}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
     </StepCard>
   );
 }
 
 /** "Connect a wallet": opens the wallet picker. Used wherever an action has to send from an EVM wallet. */
-export function ConnectWalletButton({ variant = "default" }: { variant?: "default" | "outline" }) {
+/** EVM wallets Backstop supports. */
+export const EVM_WALLETS = /metamask|rabby/i;
+
+export function ConnectWalletButton({ variant = "default", label = "Connect loan wallet", onConnected }: { variant?: "default" | "outline"; label?: string; /** Runs once the wallet connected, before the picker closes. */ onConnected?: () => void }) {
   const { identity } = useEvmIdentity();
   const [open, setOpen] = useState(false);
   const connecting = identity.mode === "none" && identity.connecting;
   return (
     <>
       <Button variant={variant} onClick={() => setOpen(true)} disabled={connecting}>
-        {connecting ? "Waiting for wallet..." : "Connect a wallet"}
+        {connecting ? "Waiting for wallet..." : label}
       </Button>
-      <EvmConnectDialog open={open} onOpenChange={setOpen} />
+      <EvmConnectDialog open={open} onOpenChange={setOpen} only={EVM_WALLETS} onConnected={onConnected} />
     </>
   );
 }

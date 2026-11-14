@@ -49,10 +49,10 @@ describe("loan_without_usdc_debt_cannot_be_protected", () => {
     expect(classifyDebt({ usdcVariableDebt: 0n, totalDebtBase: 5n })).toBe("other");
     expect(classifyDebt({ usdcVariableDebt: 0n, totalDebtBase: 0n })).toBe("none");
   });
-  it("blocks creation for no debt and for non-USDC debt with calm copy", () => {
-    expect(createBlockReason({ ...ready, debtKind: "none" })).toBe("We found no Aave loan at this address on Base.");
+  it("allows creation before the loan exists, and blocks non-USDC debt with calm copy", () => {
+    expect(createBlockReason({ ...ready, debtKind: "none" })).toBeNull();
     expect(createBlockReason({ ...ready, debtKind: "other" })).toBe("This loan's debt isn't USDC. Backstop can only repay USDC debt for now.");
-    expect(debtBlockReason("usdc", "Base")).toBeNull();
+    expect(debtBlockReason("usdc")).toBeNull();
   });
 });
 

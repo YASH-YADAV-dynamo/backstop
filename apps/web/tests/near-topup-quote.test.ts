@@ -179,6 +179,7 @@ describe("POST /api/near-topup/quote handler", () => {
     ["amountIn", (r) => (r.quote.amountIn = "50000000")],
     ["deadline too soon", (r) => (r.quote.deadline = new Date(NOW + 60_000).toISOString())],
     ["deadline in the past", (r) => (r.quote.deadline = new Date(NOW - 60_000).toISOString())],
+    ["deadline more than 7 days away", (r) => (r.quote.deadline = new Date(NOW + 8 * 24 * 3_600_000).toISOString())],
     ["deposit address format", (r) => (r.quote.depositAddress = "abcdef0123456789")],
     ["recipient type", (r) => (r.quoteRequest.recipientType = "INTENTS")],
     ["dry flag", (r) => (r.quoteRequest.dry = true)],
@@ -197,6 +198,11 @@ describe("POST /api/near-topup/quote handler", () => {
       expect((res.body as { error: string }).error).toMatch(/signed quote was refused/);
     });
   }
+
+  it("accepts the 72 h deposit window 1Click actually signs (it ignores the 30 min we ask for)", async () => {
+    const res = await handleTopUpQuote(GOOD, deps({ tamper: (r) => (r.quote.deadline = new Date(NOW + 72 * 3_600_000).toISOString()) }));
+    expect(res.status).toBe(200);
+  });
 
   it("checkTopUpQuote refuses a deposit address on screen that differs from the signed one", () => {
     const raw = fakeQuote(buildTopUpQuoteBody(GOOD, NOW));

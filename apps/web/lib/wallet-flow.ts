@@ -117,6 +117,18 @@ export function evmWalletChoices<C extends ConnectorLike>(connectors: readonly C
   return [...announced, ...(announced.length === 0 && hasBareProvider ? generic : []), ...others];
 }
 
+/**
+ * Shown when a transaction is for one network and the wallet is on another. `have` is the wallet's network by name
+ * (null when it is not known); raw chain ids never reach the user.
+ */
+export function wrongNetworkMessage(have: string | null, want: string): string {
+  return `Your wallet is on ${have ?? "another network"}; this transaction is on ${want}. Switch to ${want}, then start again: this window closes when the network changes.`;
+}
+
+/** After this many failed tries in a row, the create card stops retrying on its own and offers "Try again". */
+export const PENDING_MAX_FAILURES = 10;
+export const pendingGivesUp = (failuresInARow: number): boolean => failuresInARow >= PENDING_MAX_FAILURES;
+
 const EVM_ACCOUNT = /^0x[0-9a-f]{40}$/i;
 
 /** A NEAR account created from an Ethereum wallet (NEAR Connect's "Ethereum Wallets"). */
@@ -130,14 +142,14 @@ export function isEthereumNearAccount(walletName: string, accountId: string): bo
  */
 export function ethereumWalletNearHint(
   input: { walletName: string; accountId: string; needYocto: bigint; haveYocto: bigint | null },
-  /** "Get NEAR" is on (NEXT_PUBLIC_GET_NEAR_ENABLED=1): point to that card instead of an exchange. */
+  /** Swapping into NEAR is on (NEXT_PUBLIC_GET_NEAR_ENABLED=1): point to the deposit step's "MetaMask / Rabby" tab instead of an exchange. */
   getNear: boolean = PUBLIC_ENV.getNearEnabled,
 ): string | null {
   if (!isEthereumNearAccount(input.walletName, input.accountId)) return null;
   if (input.haveYocto === null || input.haveYocto >= input.needYocto) return null;
   const missing = input.needYocto - input.haveYocto;
   if (getNear) {
-    return `Your NEAR account comes from an Ethereum wallet. This step needs about ${nearText(input.needYocto, 3)} in NEAR itself; ETH or USDC cannot pay it directly. Use "Get NEAR" on the create card to swap USDC or ETH on Base into at least ${nearText(missing, 3)} for ${input.accountId}, or send that much NEAR from an exchange, then try again.`;
+    return `Your NEAR account comes from an Ethereum wallet. This step needs about ${nearText(input.needYocto, 3)} in NEAR itself; ETH or USDC cannot pay it directly. Use the "MetaMask / Rabby" tab in the deposit step to swap USDC or ETH on Base into at least ${nearText(missing, 3)} for ${input.accountId}, or send that much NEAR from an exchange, then try again.`;
   }
   return `Your NEAR account comes from an Ethereum wallet. This step needs about ${nearText(input.needYocto, 3)} in NEAR itself; ETH or USDC in that wallet cannot pay it. Send at least ${nearText(missing, 3)} to ${input.accountId} (for example from an exchange), then try again.`;
 }

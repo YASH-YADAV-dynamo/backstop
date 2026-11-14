@@ -13,7 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
 import { Dialog } from "radix-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSendTransaction } from "wagmi";
+import { useSendTransaction, useSwitchChain } from "wagmi";
 import { useEvmIdentity } from "@/components/app/evm-identity";
 import { useNear } from "@/components/wallet/near-provider";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import { wagmiConfig } from "@/lib/wagmi";
 import type { Prepared, PreparedEvm, PreparedNear, ReviewRequest } from "@/lib/review";
 import { groupAddress } from "@/lib/validate";
 import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
-import { createInFlightGuard, ethereumWalletNearHint, WALLET_STALL_MS } from "@/lib/wallet-flow";
+import { createInFlightGuard, ethereumWalletNearHint, WALLET_STALL_MS, wrongNetworkMessage } from "@/lib/wallet-flow";
 
 const REFRESH_MS = 15_000;
 const RECEIPT_POLL_MS = 4_000;
@@ -84,6 +84,9 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
   const [loadError, setLoadError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ name: "reviewing" });
   const [notice, setNotice] = useState<string | null>(null);
+  /** The network the transaction needs, while the wallet is on another one: offers a switch button under the notice. */
+  const [switchTo, setSwitchTo] = useState<number | null>(null);
+  const { mutate: switchChain, isPending: switching } = useSwitchChain();
   const [showRaw, setShowRaw] = useState(false);
   const [stalled, setStalled] = useState(false);
   const startEpochs = useRef({ near: near.epoch, evm: evmEpoch });
@@ -171,6 +174,7 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
     /** False once a newer attempt started or the account or network changed: that answer must not touch this screen. */
     const current = () => attempt.current === mine && liveEpochs.current.near === startedAt.near && liveEpochs.current.evm === startedAt.evm;
     setNotice(null);
+    setSwitchTo(null);
     if (shown.network === "near") {
       setPhase({ name: "waiting" });
       request.beforeSend?.();
@@ -206,7 +210,9 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
     }
     if (identity.chainId !== shown.chainId) {
       guard.current.end(token);
-      setNotice(`Your wallet is on chain ${identity.chainId ?? "unknown"}; this transaction is on ${networkName(shown.chainId)}. Switch networks, then try again.`);
+      const have = identity.chainName ?? (identity.chainId !== undefined ? (resolveChain(identity.chainId)?.name ?? wagmiConfig.chains.find((c) => c.id === identity.chainId)?.name ?? null) : null);
+      setNotice(wrongNetworkMessage(have, networkName(shown.chainId)));
+      setSwitchTo(shown.chainId);
       return;
     }
     const account = identity.address.toLowerCase();
@@ -349,6 +355,22 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
             </p>
           ) : null}
           {notice ? <p role="status" className="mt-3 text-sm text-muted-foreground">{notice}</p> : null}
+          {switchTo !== null && phase.name === "reviewing" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              disabled={switching}
+              onClick={() =>
+                switchChain(
+                  { chainId: switchTo as (typeof wagmiConfig.chains)[number]["id"] },
+                  { onError: (e) => setNotice(walletErrorMessage(e, "Your wallet would not switch", "the switch button again").message) },
+                )
+              }
+            >
+              {switching ? "Check your wallet..." : `Switch to ${networkName(switchTo)}`}
+            </Button>
+          ) : null}
 
           {phase.name === "waiting" ? (
             <div role="status" className="mt-4 space-y-2 text-sm">

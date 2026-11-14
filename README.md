@@ -2,7 +2,7 @@
 
 **Backstop pulls your money from any chain to save your loan before it gets liquidated.**
 
-Live on NEAR mainnet · Aave v3 on Base and Arbitrum · beta, invite-only, unaudited, tiny amounts
+Live on NEAR mainnet · Aave v3 on Base and Arbitrum · beta, open to everyone, unaudited, tiny amounts
 
 <!-- DEMO GIF: add docs/assets/demo.gif after the first mainnet rescue -->
 
@@ -229,7 +229,7 @@ swap. Tests: `bridge_pays_the_service_fee_*`, `the_fee_rate_is_capped_at_50_bps_
 ## Limits and risks
 
 - Beta and unaudited. Use tiny amounts. The "Live proof" table above fills in as each mainnet step is confirmed on-chain.
-- Beta and unaudited: vault creation is invite-only for now.
+- Beta and unaudited: anyone can create a vault; use tiny amounts. The operator can switch to invite-only with `VAULT_ALLOWED_OWNERS`.
 - The trigger is not enforced on-chain (NEAR cannot see the Base HF); the limits are.
 - A rescue that needs a bridge takes about a minute; a faster crash can liquidate first. USDC
   already at the policy's Base address removes the bridge from the critical path.

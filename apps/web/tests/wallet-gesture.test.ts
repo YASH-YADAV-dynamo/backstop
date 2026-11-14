@@ -22,7 +22,7 @@ describe("no await before a wallet call in click handlers", () => {
   const review = read("../components/wallet/review-dialog.tsx");
   const evmConnect = read("../components/wallet/evm-connect-dialog.tsx");
   const cases: Array<[string, string]> = [
-    ["NEAR connect", before(provider, "const connect = useCallback(", "connector.connect()")],
+    ["NEAR connect", before(provider, "const connect = useCallback(", "connector.connect(walletId")],
     ["NEAR send", before(provider, "const send = useCallback(", "wallet.signAndSendTransaction(")],
     ["review confirm (NEAR)", before(review, "function confirm()", ".send({")],
     ["review confirm (EVM)", before(review, "function confirm()", "sendEth(")],

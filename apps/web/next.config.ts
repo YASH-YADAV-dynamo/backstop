@@ -37,6 +37,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Self-contained server for the Docker image (apps/web/Dockerfile). Traced from the repo root so
+  // the workspace packages are included.
+  output: "standalone",
+  outputFileTracingRoot: fileURLToPath(new URL("../..", import.meta.url)),
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

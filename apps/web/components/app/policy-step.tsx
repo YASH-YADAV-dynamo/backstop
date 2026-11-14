@@ -98,15 +98,20 @@ function ChainPicker() {
   );
 }
 
+/** No vault yet: the create card is the step itself (not a card inside a card), with "I already have a vault" underneath. */
 function NoVault() {
   return (
     <div className="space-y-3">
       {creationOpen() ? (
         <CreateVault />
       ) : (
-        <Notice heading="Vault creation opens soon">You&apos;ll be able to open your Rescue vault right here. Check back shortly.</Notice>
+        <StepCard title="Create vault" description="Your vault holds the USDC that repays your loan. Only you can withdraw from it.">
+          <Notice heading="Vault creation opens soon">You&apos;ll be able to open your Rescue vault right here. Check back shortly.</Notice>
+        </StepCard>
       )}
-      <PasteVault />
+      <div className="px-1">
+        <PasteVault />
+      </div>
     </div>
   );
 }
@@ -128,11 +133,12 @@ function SetupChecklist({ rescueWalletReady, checksPassed, onFinish }: { rescueW
       <ul className="space-y-2">
         {items.map(([text, done]) => (
           <li key={text} className="flex items-center gap-2">
-            {done ? <Check className="size-4 text-safe" aria-hidden /> : <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />}
+            {done ? <Check className="check-pop size-4 text-safe" aria-hidden /> : <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />}
             <span className={done ? undefined : "text-muted-foreground"}>{text}</span>
           </li>
         ))}
       </ul>
+      {stalled ? null : <p className="text-xs text-muted-foreground">This finishes on its own, usually within a minute. Then you add USDC.</p>}
       {stalled && !rescueWalletReady ? (
         <div className="space-y-2">
           <p className="text-muted-foreground">This is taking longer than usual. One more confirmation finishes it.</p>
@@ -145,11 +151,9 @@ function SetupChecklist({ rescueWalletReady, checksPassed, onFinish }: { rescueW
 
 /** What is wrong with (or still missing from) the selected vault. Renders nothing when it is ready. */
 function VaultStatus({ openAdvanced }: { openAdvanced: (item: string) => void }) {
-  const { policyId, query, snap, verified, activated, requestsLoading, forget, openReview } = usePolicyContext();
+  const { policyId, query, snap, verified, activated, forget, openReview } = usePolicyContext();
 
-  if (policyId === null) {
-    return requestsLoading ? <Looking /> : <NoVault />;
-  }
+  if (policyId === null) return null;
   if (query.isError && !snap) {
     return (
       <div className="space-y-3">
@@ -215,11 +219,20 @@ function Looking() {
   );
 }
 
-/** Step 2: pick the loan, then show the vault's state until it is safe and set up. */
+/** Step 2: create the vault when the account has none; otherwise show the vault's state until it is safe and set up. */
 export function ProtectStep({ openAdvanced }: { openAdvanced: (item: string) => void }) {
+  const { policyId, requestsLoading, known } = usePolicyContext();
+  if (policyId === null) {
+    if (!requestsLoading) return <NoVault />;
+    return (
+      <StepCard title="Create vault" description="Checking whether this account already has a vault.">
+        <Looking />
+      </StepCard>
+    );
+  }
   return (
-    <StepCard title="Find your Rescue vault" description="The vault holds your USDC on NEAR and enforces your limits.">
-      <ChainPicker />
+    <StepCard title="Your Rescue vault" description="It holds your USDC on NEAR and enforces your limits.">
+      {known.length > 1 ? <ChainPicker /> : null}
       <VaultStatus openAdvanced={openAdvanced} />
     </StepCard>
   );

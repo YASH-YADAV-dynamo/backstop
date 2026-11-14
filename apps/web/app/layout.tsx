@@ -33,7 +33,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="flex min-h-dvh flex-col font-sans">
+      <body className="flex min-h-dvh flex-col font-sans" suppressHydrationWarning>
         <TooltipProvider delayDuration={150}>
           <SiteHeader />
           <main className="flex-1">{children}</main>

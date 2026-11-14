@@ -1,0 +1,50 @@
+# Two services on one host: the website (web) and the rescue bot (bot).
+# Postgres is hosted (Neon); there is no database container. DATABASE_URL points at it.
+#
+#   .env.web  -> read by `web` (build args + DATABASE_URL, VAULT_ALLOWED_OWNERS). No private keys.
+#   .env.bot  -> read by `bot` only. Holds AGENT_PRIVATE_KEY and VAULT_DEPLOYER_PRIVATE_KEY.
+# The two files are separate so the web container can never see the bot keys. Neither is committed.
+#
+# Before `docker compose build` the policy wasm must exist: contracts/policy/target/near/backstop_policy.wasm
+# (build it with `pnpm policy:build:wsl`). The build fails with a clear message if it is missing.
+#
+# Build args are read from your shell or from `--env-file .env.web`:
+#   docker compose --env-file .env.web up -d --build
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+        NEXT_PUBLIC_REPO_URL: ${NEXT_PUBLIC_REPO_URL:-}
+        NEXT_PUBLIC_AGENT_ACCOUNT_ID: ${NEXT_PUBLIC_AGENT_ACCOUNT_ID:-}
+        NEXT_PUBLIC_POLICY_CODE_HASH: ${NEXT_PUBLIC_POLICY_CODE_HASH:-}
+        NEXT_PUBLIC_POLICY_CODE_BYTES: ${NEXT_PUBLIC_POLICY_CODE_BYTES:-}
+        NEXT_PUBLIC_VAULT_DEPLOYER_PK: ${NEXT_PUBLIC_VAULT_DEPLOYER_PK:-}
+        NEXT_PUBLIC_WC_PROJECT_ID: ${NEXT_PUBLIC_WC_PROJECT_ID:-}
+        NEXT_PUBLIC_GET_NEAR_ENABLED: ${NEXT_PUBLIC_GET_NEAR_ENABLED:-}
+        NEXT_PUBLIC_INVITE_CONTACT: ${NEXT_PUBLIC_INVITE_CONTACT:-}
+        NEXT_PUBLIC_POLICY_CONTRACT_ID: ${NEXT_PUBLIC_POLICY_CONTRACT_ID:-}
+        NEXT_PUBLIC_FACTORY_ID: ${NEXT_PUBLIC_FACTORY_ID:-}
+    image: backstop-web
+    restart: unless-stopped
+    # .env.web holds only what the site reads at runtime (DATABASE_URL, VAULT_ALLOWED_OWNERS, RPC URLs). No private keys.
+    env_file: .env.web
+    environment:
+      NODE_ENV: production
+    # Plain HTTP on 3000: put nginx or an ALB in front for TLS; there is no TLS inside the container.
+    ports:
+      - "3000:3000"
+
+  bot:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    image: backstop-bot
+    restart: unless-stopped
+    env_file: .env.bot
+    environment:
+      POLICY_WASM_PATH: /opt/backstop/backstop_policy.wasm
+    # No ports: the bot only makes outbound calls.

@@ -107,9 +107,9 @@ describe("prepareCreateVault", () => {
     env.vaultDeployerPk = undefined;
     expect(await prepareCreateVault(OWNER, input)).toEqual({ ok: false, reason: "Vault creation opens soon." });
   });
-  it("loan_without_usdc_debt_cannot_be_protected", async () => {
+  it("no_loan_yet_is_allowed_but_non_usdc_debt_cannot_be_protected", async () => {
     debtKind = "none";
-    expect(await prepareCreateVault(OWNER, input)).toEqual({ ok: false, reason: "We found no Aave loan at this address on Base." });
+    expect((await prepareCreateVault(OWNER, input)).ok).toBe(true);
     debtKind = "other";
     expect(await prepareCreateVault(OWNER, input)).toEqual({ ok: false, reason: "This loan's debt isn't USDC. Backstop can only repay USDC debt for now." });
   });

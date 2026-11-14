@@ -1,0 +1,38 @@
+# Keep secrets and local state out of every image. Build context = repo root.
+.git
+.github
+**/node_modules
+**/.next
+**/.turbo
+**/dist
+**/coverage
+**/*.log
+**/*.tsbuildinfo
+
+# Every env file except the documented template. (Compose passes runtime env via env_file, never the image.)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/credentials
+
+# Local runtime data and tooling
+rescues.json
+vault-*.json
+vault-status.json.lock
+.neon
+tools
+.claude
+CLAUDE.md
+
+# Rust build output. Only the built policy wasm the bot deploys is kept.
+**/target
+!contracts/policy/target/near
+!contracts/policy/target/near/backstop_policy.wasm
+
+# Docs: the website reads docs/site at runtime; everything else is not needed.
+docs/*
+!docs/site

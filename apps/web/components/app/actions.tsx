@@ -8,6 +8,7 @@ import { FundFromChain } from "@/components/app/fund-from-chain";
 import { Row } from "@/components/app/manage-panel";
 import { usePolicyContext } from "@/components/app/policy-context";
 import { StepCard } from "@/components/app/step-card";
+import { CoinsArt } from "@/components/app/vault-art";
 import { toast } from "@/components/ui/toaster";
 import { Button } from "@/components/ui/button";
 import { formatDuration } from "@/lib/format";
@@ -23,6 +24,8 @@ import {
   prepareWithdrawNear,
 } from "@/lib/review";
 import type { PolicyLimits } from "@/lib/policy-client";
+import { useLocalString } from "@/lib/use-client";
+import { cn } from "@/lib/utils";
 
 const inputClass = "h-10 w-full min-w-0 rounded-md border bg-background px-3 text-sm sm:flex-1";
 
@@ -131,7 +134,9 @@ function LimitsForm({ policyId, owner, limits }: { policyId: string; owner: stri
 function DepositPanel() {
   const { owner, policyId, snap, verified, openReview } = usePolicyContext();
   const account = useNearAccount(owner);
-  const [fromChain, setFromChain] = useState(false);
+  // Until the user picks: a deposit from another chain that is under way keeps its tab; otherwise the NEAR wallet, unless it holds no USDC.
+  const [picked, setPicked] = useState<"near" | "chain" | null>(null);
+  const [chainDeposit] = useLocalString(policyId ? `backstop.fund.${policyId}` : null);
   if (!owner || !policyId || !snap) return null;
   if (!verified) {
     return (
@@ -141,10 +146,30 @@ function DepositPanel() {
     );
   }
   const walletUsdc = account.data?.usdc ?? null;
-  const link = "text-sm underline underline-offset-4 hover:text-foreground";
+  const fromChain = picked !== null ? picked === "chain" : chainDeposit !== null || walletUsdc === 0n;
+  const sources = [
+    ["near", "My NEAR wallet"],
+    ["chain", "Another chain"],
+  ] as const;
   return (
     <BetaGate owner={owner}>
     <div className="space-y-3">
+      <div role="group" aria-label="Add USDC from" className="flex gap-1 rounded-lg bg-muted p-1">
+        {sources.map(([id, text]) => {
+          const on = fromChain === (id === "chain");
+          return (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => setPicked(id)}
+              className={cn("inline-flex h-9 flex-1 items-center justify-center rounded-md px-3 text-sm transition-colors duration-200", on ? "bg-card font-medium shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground")}
+            >
+              {text}
+            </button>
+          );
+        })}
+      </div>
       {fromChain ? (
         <FundFromChain />
       ) : (
@@ -154,13 +179,10 @@ function DepositPanel() {
           placeholder="20.00"
           button="Review deposit"
           onMax={walletUsdc !== null && walletUsdc > 0n ? () => formatUsdc(walletUsdc) : undefined}
-          hint={walletUsdc === null ? undefined : walletUsdc > 0n ? `In your NEAR wallet: ${formatUsdc(walletUsdc)} USDC` : "Your NEAR wallet has no USDC; fund from another chain instead."}
+          hint={walletUsdc === null ? undefined : walletUsdc > 0n ? `In your NEAR wallet: ${formatUsdc(walletUsdc)} USDC` : "Your NEAR wallet has no USDC. Choose Another chain above to bring it from Base, Arbitrum or elsewhere."}
           onSubmit={(v) => openReview({ kind: "deposit", prepare: () => prepareDeposit(policyId, owner, v) })}
         />
       )}
-      <button type="button" onClick={() => setFromChain((f) => !f)} className={link}>
-        {fromChain ? "Add from my NEAR wallet" : "Fund from another chain"}
-      </button>
     </div>
     </BetaGate>
   );
@@ -169,8 +191,9 @@ function DepositPanel() {
 /** Wizard step 3. */
 export function FundStep() {
   return (
-    <StepCard title="Add USDC to your vault" description="Rescues are paid from this USDC, and only you can take it out.">
+    <StepCard title="Add USDC to your vault" description="Rescues are paid from this USDC, and only you can take it out." art={<CoinsArt className="h-20 w-28 shrink-0 sm:h-24 sm:w-32" />}>
       <DepositPanel />
+      <p className="text-xs text-muted-foreground">Last step. Once your USDC arrives, this page becomes your loan dashboard. You can withdraw any time.</p>
     </StepCard>
   );
 }
