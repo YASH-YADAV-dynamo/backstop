@@ -3,7 +3,7 @@
   "name": "Backstop",
   "one_liner": "Backstop pulls your money from any chain to save your loan before it gets liquidated.",
   "stage": {
-    "label": "Hackathon prototype, unaudited",
+    "label": "Beta, smart contracts not yet audited",
     "network": "NEAR mainnet + Base mainnet, tiny amounts",
     "mainnet_runs_so_far": 0,
     "tracks": [

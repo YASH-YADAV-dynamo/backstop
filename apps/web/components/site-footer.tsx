@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ChainLogo, chainName } from "@/components/landing/chain-logo";
 import { ShieldMark } from "@/components/logo";
 import { SITE } from "@/lib/site";
 
@@ -22,6 +23,8 @@ const COLS = [
     ],
   },
 ] as const;
+
+const NETWORKS = ["base", "arbitrum", "near"] as const;
 
 export function SiteFooter() {
   return (
@@ -69,6 +72,17 @@ export function SiteFooter() {
             </li>
           </ul>
         </nav>
+      </div>
+      <div className="border-t">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-4 py-5 text-sm text-muted-foreground">
+          <span className="text-xs font-medium uppercase tracking-wider">Networks</span>
+          {NETWORKS.map((n) => (
+            <span key={n} className="inline-flex items-center gap-2 text-foreground/80">
+              <ChainLogo chain={n} className="h-4" />
+              {chainName(n)}
+            </span>
+          ))}
+        </div>
       </div>
     </footer>
   );

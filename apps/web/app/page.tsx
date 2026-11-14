@@ -1,7 +1,10 @@
-import { ArrowRight, Check, Eye, KeyRound, ReceiptText, ShieldAlert, SlidersHorizontal, Vault } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ChainChip, ChainLogo, type ChainLogoKey } from "@/components/landing/chain-logo";
 import { HeroRescue } from "@/components/landing/hero-rescue";
+import { ContainedIcon, LimitsIcon, NoKeyIcon, RepayIcon, VaultIcon, WatchIcon } from "@/components/landing/icons";
+import { Reveal } from "@/components/landing/reveal";
 import { RescueHistory } from "@/components/rescue-table";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
@@ -14,22 +17,30 @@ export const revalidate = 60;
 
 const TICKS = ["You set the limits", "Only you can withdraw", "Pause any time"];
 
-const STEPS = [
-  { icon: Vault, title: "Open a vault and add USDC", body: "The vault is yours. It holds the spare USDC Backstop may use, and only you can take it out." },
-  { icon: Eye, title: "We watch your loan every 30 seconds", body: "You pick the level at which Backstop steps in, for example when your loan health drops below 1.15." },
-  { icon: ReceiptText, title: "If it gets risky, we repay part of it and show you a receipt", body: "Every rescue stays inside the limits you set and comes with a plain-English receipt and links." },
+/** Product terms, not traction numbers. */
+const FACTS = [
+  { value: "0.10%", label: "Fee, only when money is moved" },
+  { value: "~3 NEAR", label: "Refundable deposit while your vault is open" },
+  { value: "30 s", label: "How often your loan is checked" },
+  { value: "0", label: "Private keys on your rescue wallet" },
+];
+
+const STEPS: { icon: typeof VaultIcon; title: string; body: string; chains: ChainLogoKey[] }[] = [
+  { icon: VaultIcon, title: "Open a vault and add USDC", body: "The vault is yours. It holds the spare USDC Backstop may use, and only you can take it out.", chains: ["near"] },
+  { icon: WatchIcon, title: "We watch your loan every 30 seconds", body: "You pick the level at which Backstop steps in, for example when your loan health drops below 1.15.", chains: ["base", "arbitrum"] },
+  { icon: RepayIcon, title: "If it gets risky, we repay part of it and show you a receipt", body: "Every rescue stays inside the limits you set and comes with a plain-English receipt and links.", chains: [] },
 ];
 
 const SAFETY = [
-  { icon: KeyRound, title: "No one holds a key to your rescue money", body: "Your rescue wallet has no private key at all. Only your vault's rules can move it, and only to repay your loan." },
-  { icon: SlidersHorizontal, title: "Your limits are enforced on NEAR", body: "How low health may fall, how much one rescue repays, how much per day and how often are checked by code you can read, not by a promise." },
-  { icon: ShieldAlert, title: "The worst case is small", body: "A hacked bot could only repay your own debt early, inside your limits. It cannot send your money anywhere else." },
+  { icon: NoKeyIcon, title: "No one holds a key to your rescue money", body: "Your rescue wallet has no private key at all. Only your vault's rules can move it, and only to repay your loan." },
+  { icon: LimitsIcon, title: "Your limits are enforced on NEAR", body: "How low health may fall, how much one rescue repays, how much per day and how often are checked by code you can read, not by a promise." },
+  { icon: ContainedIcon, title: "The worst case is small", body: "A hacked bot could only repay your own debt early, inside your limits. It cannot send your money anywhere else." },
 ];
 
-const UNDER_THE_HOOD = [
-  { label: "Aave v3 on Base", href: "/docs/overview" },
-  { label: "Aave v3 on Arbitrum One", href: "/docs/overview" },
-  { label: "Vault and rules on NEAR", href: "/docs/policy-contract" },
+const UNDER_THE_HOOD: { label: string; href: string; chain?: ChainLogoKey }[] = [
+  { label: "Aave v3 on Base", href: "/docs/overview", chain: "base" },
+  { label: "Aave v3 on Arbitrum One", href: "/docs/overview", chain: "arbitrum" },
+  { label: "Vault and rules on NEAR", href: "/docs/policy-contract", chain: "near" },
   { label: "NEAR Chain Signatures", href: "/docs/security-model" },
   { label: "NEAR Intents (1Click)", href: "/docs/how-a-rescue-works" },
   { label: "Architecture", href: "/docs/architecture" },
@@ -48,12 +59,37 @@ const FAQ = [
   { q: "Is it audited?", a: "Not yet. Backstop is in beta. Its smart contracts are open source and not yet audited, so start with an amount you are comfortable with. See Risks and limits." },
 ];
 
-function SectionBlock({ id, eyebrow, title, children }: { id?: string; eyebrow: string; title: string; children: ReactNode }) {
+const GRID_BG = {
+  backgroundImage:
+    "linear-gradient(to right, var(--color-border) 1px, transparent 1px), linear-gradient(to bottom, var(--color-border) 1px, transparent 1px)",
+  backgroundSize: "64px 64px",
+} as const;
+
+const CARD = "group relative h-full overflow-hidden rounded-2xl border bg-card/70 p-6 transition-colors duration-300 hover:border-primary/50 sm:p-7";
+const ICON_TILE = "grid size-12 place-items-center rounded-xl border border-primary/30 bg-primary/10 text-primary shadow-[0_0_28px_-8px_var(--color-primary)]";
+
+/** A thin light along the top edge of a card that brightens on hover. */
+function CardEdge() {
   return (
-    <section id={id} className="mx-auto w-full max-w-6xl scroll-mt-28 px-4 py-12 sm:py-16">
-      <p className="eyebrow text-primary">{eyebrow}</p>
-      <h2 className="font-display mt-3 max-w-3xl text-[1.75rem] sm:text-[2.75rem]">{title}</h2>
-      <div className="mt-8 sm:mt-10">{children}</div>
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-30 transition-opacity duration-300 group-hover:opacity-100"
+    />
+  );
+}
+
+function SectionBlock({ id, eyebrow, title, lead, children }: { id?: string; eyebrow: string; title: string; lead?: string; children: ReactNode }) {
+  return (
+    <section id={id} className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 py-14 sm:py-24">
+      <Reveal>
+        <p className="eyebrow flex items-center gap-3 text-primary">
+          <span className="h-px w-8 bg-primary" aria-hidden />
+          {eyebrow}
+        </p>
+        <h2 className="font-display mt-4 max-w-3xl text-[1.9rem] sm:text-5xl">{title}</h2>
+        {lead ? <p className="mt-4 max-w-2xl text-muted-foreground sm:text-lg">{lead}</p> : null}
+      </Reveal>
+      <div className="mt-9 sm:mt-12">{children}</div>
     </section>
   );
 }
@@ -64,38 +100,6 @@ function lastProvenRescue(history: LoadedSection<RescueRow[]>): RescueRow | null
   return history.data.find((r) => !r.dryRun && r.status === "success" && r.hfAfter !== null && Boolean(r.links.baseRepayTx)) ?? null;
 }
 
-function ProofStrip({ last }: { last: RescueRow | null }) {
-  return (
-    <div className="border-y bg-muted/40">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
-        {last ? (
-          <p>
-            <span className="text-muted-foreground">Last rescue: </span>
-            <a href={last.links.baseRepayTx} target="_blank" rel="noreferrer" className="num font-medium text-primary hover:underline">
-              {last.amountUsdc} USDC, health {last.hfBefore} → {last.hfAfter}
-            </a>
-          </p>
-        ) : (
-          <p className="text-muted-foreground">
-            <span className="font-medium text-foreground">0.10% fee, only when money is moved.</span> Pause or withdraw any time.
-          </p>
-        )}
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="size-2 rounded-full bg-chain-base" aria-hidden /> Base
-          </span>
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <span className="size-2 rounded-full bg-chain-arbitrum" aria-hidden /> Arbitrum One
-          </span>
-          <a href={SITE.repoUrl} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
-            View the code <ArrowRight className="size-4" aria-hidden />
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default async function Home() {
   const history = await getHistory();
   const last = lastProvenRescue(history);
@@ -104,66 +108,107 @@ export default async function Home() {
 
   return (
     <div className="overflow-x-clip">
-      <section className="relative">
+      <section className="relative isolate">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 opacity-[0.35]"
+          className="pointer-events-none absolute inset-0 -z-10 opacity-40"
           style={{
-            backgroundImage:
-              "linear-gradient(to right, var(--color-border) 1px, transparent 1px), linear-gradient(to bottom, var(--color-border) 1px, transparent 1px)",
-            backgroundSize: "56px 56px",
-            maskImage: "radial-gradient(70% 70% at 50% 30%, black, transparent)",
-            WebkitMaskImage: "radial-gradient(70% 70% at 50% 30%, black, transparent)",
+            ...GRID_BG,
+            maskImage: "radial-gradient(75% 60% at 50% 25%, black, transparent)",
+            WebkitMaskImage: "radial-gradient(75% 60% at 50% 25%, black, transparent)",
           }}
         />
-        <div className="mx-auto grid w-full max-w-6xl items-center gap-10 px-4 pt-10 pb-12 sm:pt-16 sm:pb-16 lg:grid-cols-[1.05fr_1fr] lg:gap-14">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 -top-40 -z-10 h-[38rem]"
+          style={{ background: "radial-gradient(50% 60% at 50% 30%, color-mix(in oklab, var(--color-primary) 20%, transparent), transparent 75%)" }}
+        />
+
+        <div className="mx-auto grid w-full max-w-6xl items-center gap-10 px-4 pt-10 pb-12 sm:pt-14 sm:pb-16 lg:grid-cols-[0.74fr_1.26fr] lg:gap-12">
           <div className="min-w-0">
-            <p className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground sm:text-sm">
-              <span className="size-1.5 rounded-full bg-primary" aria-hidden />
-              For Aave loans on Base and Arbitrum
+            <p className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-full border bg-card/70 px-3.5 py-1.5 text-xs text-muted-foreground backdrop-blur sm:text-sm">
+              For Aave loans on
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                <ChainLogo chain="base" className="h-3.5" /> Base
+              </span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                <ChainLogo chain="arbitrum" className="h-4" /> Arbitrum One
+              </span>
             </p>
-            <h1 className="font-display mt-5 text-[clamp(2.5rem,6vw,5rem)]">Save your loan before it is liquidated.</h1>
+            <h1 className="font-display mt-6 text-[clamp(2.5rem,7vw,4.5rem)] lg:text-[3.6rem]">
+              Save your loan{" "}
+              <span className="bg-gradient-to-r from-primary via-primary to-warn bg-clip-text text-transparent">before it is liquidated.</span>
+            </h1>
             <p className="mt-5 max-w-[52ch] text-lg text-muted-foreground">
-              When your loan&apos;s health drops, Backstop moves your spare USDC from NEAR to your loan and repays part of it.
-              Health recovers and you keep your collateral.
+              When your loan&apos;s health drops, Backstop moves your spare USDC from NEAR to your loan and repays part of it. Health
+              recovers and you keep your collateral.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild size="lg" className="w-full sm:w-auto">
+              <Button asChild size="lg" className="w-full shadow-[0_0_32px_-6px_var(--color-primary)] sm:w-auto">
                 <Link href="/app">
                   Protect my loan <ArrowRight aria-hidden />
                 </Link>
               </Button>
-              <Button asChild size="lg" variant="outline" className="w-full sm:w-auto">
+              <Button asChild size="lg" variant="outline" className="w-full bg-card/60 backdrop-blur sm:w-auto">
                 <Link href="#how">See how it works</Link>
               </Button>
             </div>
-            <ul className="mt-8 flex flex-col gap-2 text-sm sm:flex-row sm:flex-wrap sm:gap-x-6">
+            <ul className="flex flex-col gap-2 text-sm lg:mt-8">
               {TICKS.map((t) => (
-                <li key={t} className="flex items-center gap-2">
+                <li key={t} className="hidden items-center gap-2 lg:flex">
                   <Check className="size-4 text-safe" aria-hidden />
                   {t}
                 </li>
               ))}
+              {last ? (
+                <li>
+                  <span className="text-muted-foreground">Last rescue: </span>
+                  <a href={last.links.baseRepayTx} target="_blank" rel="noreferrer" className="num font-medium text-primary hover:underline">
+                    {last.amountUsdc} USDC, health {last.hfBefore} → {last.hfAfter}
+                  </a>
+                </li>
+              ) : null}
             </ul>
           </div>
           <HeroRescue />
         </div>
       </section>
 
-      <ProofStrip last={last} />
+      <section aria-label="The terms" className="border-y bg-muted/30">
+        <dl className="mx-auto grid w-full max-w-6xl grid-cols-2 lg:grid-cols-4">
+          {FACTS.map((f, i) => (
+            <div key={f.label} className={`flex flex-col-reverse justify-end gap-2 px-4 py-6 sm:py-8 ${i % 2 ? "border-l" : ""} ${i > 1 ? "border-t lg:border-t-0" : ""} ${i === 2 ? "lg:border-l" : ""}`}>
+              <dt className="text-sm text-muted-foreground">{f.label}</dt>
+              <dd className="font-display text-3xl sm:text-4xl">{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
 
       <SectionBlock id="how" eyebrow="How it works" title="Three steps. Then it watches for you.">
         <ol className="grid gap-4 md:grid-cols-3">
           {STEPS.map((s, i) => (
-            <li key={s.title} className="relative rounded-2xl border bg-card p-6">
-              <div className="flex items-center justify-between">
-                <span className="grid size-11 place-items-center rounded-xl bg-accent text-accent-foreground">
-                  <s.icon className="size-5" aria-hidden />
-                </span>
-                <span className="num text-sm text-muted-foreground">0{i + 1}</span>
-              </div>
-              <h3 className="font-display mt-5 text-xl leading-tight">{s.title}</h3>
-              <p className="mt-3 text-sm text-muted-foreground">{s.body}</p>
+            <li key={s.title}>
+              <Reveal delay={i * 90} className="h-full">
+                <div className={`${CARD} flex flex-col`}>
+                  <CardEdge />
+                  <div className="flex items-center justify-between">
+                    <span className={ICON_TILE}>
+                      <s.icon className="size-6" />
+                    </span>
+                    <span className="font-display text-4xl text-foreground/10">0{i + 1}</span>
+                  </div>
+                  <h3 className="font-display mt-6 text-xl leading-tight sm:text-[1.4rem]">{s.title}</h3>
+                  <p className="mt-3 text-sm text-muted-foreground sm:text-base">{s.body}</p>
+                  {s.chains.length > 0 ? (
+                    <div className="mt-auto flex flex-wrap gap-2 pt-6">
+                      {s.chains.map((c) => (
+                        <ChainChip key={c} chain={c} />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </Reveal>
             </li>
           ))}
         </ol>
@@ -175,29 +220,45 @@ export default async function Home() {
         </p>
       </SectionBlock>
 
-      <SectionBlock id="safety" eyebrow="Safety" title="Built so it can only repay your loan.">
-        <div className="grid gap-4 md:grid-cols-3">
-          {SAFETY.map((s, i) => (
-            <div key={s.title} className={`rounded-2xl border p-6 ${i === 2 ? "border-primary/40 bg-accent text-accent-foreground" : "bg-card"}`}>
-              <s.icon className={`size-6 ${i === 2 ? "" : "text-primary"}`} aria-hidden />
-              <h3 className="font-display mt-4 text-xl leading-tight">{s.title}</h3>
-              <p className={`mt-3 text-sm ${i === 2 ? "" : "text-muted-foreground"}`}>{s.body}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-8">
-          <p className="eyebrow text-muted-foreground">Under the hood</p>
-          <ul className="mt-3 flex flex-wrap gap-2 text-sm">
-            {UNDER_THE_HOOD.map((u) => (
-              <li key={u.label}>
-                <Link href={u.href} className="inline-flex rounded-full border bg-card px-3 py-1.5 transition-colors hover:border-primary hover:text-primary">
-                  {u.label}
-                </Link>
-              </li>
+      <div className="relative isolate">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10"
+          style={{ background: "radial-gradient(45% 50% at 85% 40%, color-mix(in oklab, var(--color-primary) 10%, transparent), transparent 75%)" }}
+        />
+        <SectionBlock id="safety" eyebrow="Safety" title="Built so it can only repay your loan.">
+          <div className="grid gap-4 md:grid-cols-3">
+            {SAFETY.map((s, i) => (
+              <Reveal key={s.title} delay={i * 90} className="h-full">
+                <div className={`${CARD} ${i === 2 ? "border-primary/40 bg-gradient-to-b from-primary/15 to-card/70" : ""}`}>
+                  <CardEdge />
+                  <span className={ICON_TILE}>
+                    <s.icon className="size-6" />
+                  </span>
+                  <h3 className="font-display mt-6 text-xl leading-tight sm:text-[1.4rem]">{s.title}</h3>
+                  <p className="mt-3 text-sm text-muted-foreground sm:text-base">{s.body}</p>
+                </div>
+              </Reveal>
             ))}
-          </ul>
-        </div>
-      </SectionBlock>
+          </div>
+          <div className="mt-10">
+            <p className="eyebrow text-muted-foreground">Under the hood</p>
+            <ul className="mt-4 flex flex-wrap gap-2 text-sm">
+              {UNDER_THE_HOOD.map((u) => (
+                <li key={u.label}>
+                  <Link
+                    href={u.href}
+                    className="inline-flex items-center gap-2 rounded-full border bg-card/60 px-3 py-1.5 transition-colors hover:border-primary hover:text-primary"
+                  >
+                    {u.chain ? <ChainLogo chain={u.chain} className="h-4" /> : null}
+                    {u.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </SectionBlock>
+      </div>
 
       {mainnetRows ? (
         <SectionBlock id="history" eyebrow="Rescue history" title="Every rescue, on the record.">
@@ -205,8 +266,26 @@ export default async function Home() {
         </SectionBlock>
       ) : null}
 
-      <SectionBlock eyebrow="FAQ" title="Questions.">
-        <Accordion type="single" collapsible className="max-w-3xl rounded-2xl border bg-card px-5">
+      <section className="mx-auto grid w-full max-w-6xl gap-9 px-4 py-14 sm:py-24 lg:grid-cols-[0.8fr_1.2fr] lg:gap-14">
+        <Reveal>
+          <p className="eyebrow flex items-center gap-3 text-primary">
+            <span className="h-px w-8 bg-primary" aria-hidden />
+            FAQ
+          </p>
+          <h2 className="font-display mt-4 text-[1.9rem] sm:text-5xl">Questions.</h2>
+          <p className="mt-4 max-w-sm text-muted-foreground">
+            The longer answers are in the{" "}
+            <Link href="/docs" className="font-medium text-primary hover:underline">
+              docs
+            </Link>
+            , and all of the code is{" "}
+            <a href={SITE.repoUrl} className="font-medium text-primary hover:underline">
+              open source
+            </a>
+            .
+          </p>
+        </Reveal>
+        <Accordion type="single" collapsible className="rounded-2xl border bg-card/70 px-5 sm:px-6">
           {FAQ.map((f) => (
             <AccordionItem key={f.q} value={f.q}>
               <AccordionTrigger>{f.q}</AccordionTrigger>
@@ -214,15 +293,27 @@ export default async function Home() {
             </AccordionItem>
           ))}
         </Accordion>
-      </SectionBlock>
+      </section>
 
-      <section className="border-t bg-muted/40">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-start gap-6 px-4 py-12 sm:flex-row sm:items-center sm:justify-between sm:py-16">
-          <div>
-            <h2 className="font-display max-w-xl text-[1.75rem] sm:text-4xl">Put a backstop under your loan.</h2>
-            <p className="mt-3 text-muted-foreground">Set your limits once. Pause or withdraw any time.</p>
-          </div>
-          <Button asChild size="lg">
+      <section className="mx-auto w-full max-w-6xl px-4 pb-14 sm:pb-24">
+        <div className="relative isolate overflow-hidden rounded-3xl border border-primary/30 bg-card px-6 py-12 sm:px-12 sm:py-20 sm:text-center">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10 opacity-40"
+            style={{
+              ...GRID_BG,
+              maskImage: "radial-gradient(70% 90% at 50% 100%, black, transparent)",
+              WebkitMaskImage: "radial-gradient(70% 90% at 50% 100%, black, transparent)",
+            }}
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 -z-10"
+            style={{ background: "radial-gradient(60% 90% at 50% 110%, color-mix(in oklab, var(--color-primary) 32%, transparent), transparent 70%)" }}
+          />
+          <h2 className="font-display mx-auto max-w-2xl text-[1.9rem] sm:text-5xl">Put a backstop under your loan.</h2>
+          <p className="mt-4 text-muted-foreground sm:text-lg">Set your limits once. Pause or withdraw any time.</p>
+          <Button asChild size="lg" className="mt-8 w-full shadow-[0_0_32px_-6px_var(--color-primary)] sm:w-auto">
             <Link href="/app">
               Protect my loan <ArrowRight aria-hidden />
             </Link>
