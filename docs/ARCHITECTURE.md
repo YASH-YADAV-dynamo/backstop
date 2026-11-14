@@ -146,8 +146,8 @@ flowchart TB
 
 Users are meant to create their own vault: a keyless **vault factory** creates it from one wallet
 confirmation, the user's deposit (about 2.93 NEAR, computed on chain) is the vault's storage and comes back
-on `close` less about 0.007 NEAR, and the operator pays only the one-time factory deploy (estimated at
-about 4 NEAR, not yet measured) and the bot's gas. The factory has a fixed chain allow-list set at `new`,
+on `close` less about 0.007 NEAR, and the operator pays only the one-time factory deploy (4.86 NEAR
+including gas, computed from the 469 KB factory wasm) and the bot's gas. The factory has a fixed chain allow-list set at `new`,
 no setters, no access keys, and embeds the policy wasm, so every vault runs the factory's `policy_code_hash`.
 Vault names are `<chain>-<n>.<factory>`, with `n` from a counter, so the caller never picks a name and a
 closed vault's name is never reissued. The factory's default agent is one **bot account**: every
