@@ -33,3 +33,5 @@ AGENTS.md
 docs/design/
 docs/INTERFACES.md
 docs/contract-notes.md
+vault-status.json
+vault-status.json.lock

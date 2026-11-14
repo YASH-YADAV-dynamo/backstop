@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "demo": "tsx src/cli.ts",
-    "start": "tsx src/cli.ts --watch",
+    "start": "tsx src/cli.ts --service",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

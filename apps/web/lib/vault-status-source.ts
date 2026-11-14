@@ -1,10 +1,14 @@
 /**
- * Server-side reader of the bot's `vault_status` row. The store reader is provided by `@backstop/db` (coder B); until it lands
- * this adapter answers "no row", which the app shows as "Not watched" (never "Protected"). In development only,
+ * Server-side reader of the bot's `vault_status` row, through the read-only `@backstop/db` reader (Postgres when DATABASE_URL
+ * is set, else VAULT_STATUS_FILE). No row, or a read failure, is shown as "Not watched" (never "Protected"). In development only,
  * BACKSTOP_VAULT_STATUS_FIXTURE=watching|stale|rescuing|low-gas|refused returns a typed fixture so every pill can be seen.
  * Whatever comes back is validated with zod before the app acts on it.
  */
+import { loadWebEnv } from "@backstop/config";
+import { openVaultStatusReader, type VaultStatusReader } from "@backstop/db";
 import { vaultStatusSchema, type VaultStatus } from "@/lib/vault-status";
+
+let reader: Promise<VaultStatusReader> | undefined;
 
 const fixtureKinds = ["watching", "stale", "rescuing", "low-gas", "refused"] as const;
 type FixtureKind = (typeof fixtureKinds)[number];
@@ -36,7 +40,13 @@ export function fixtureRow(kind: FixtureKind, policyId: string, now: number): un
 async function readRow(policyId: string, now: number): Promise<unknown | null> {
   const fixture = process.env.NODE_ENV === "production" ? undefined : process.env.BACKSTOP_VAULT_STATUS_FIXTURE;
   if (fixture && (fixtureKinds as readonly string[]).includes(fixture)) return fixtureRow(fixture as FixtureKind, policyId, now);
-  return null;
+  try {
+    reader ??= openVaultStatusReader(loadWebEnv());
+    return await (await reader).get(policyId);
+  } catch {
+    reader = undefined; // retry the connection on the next request
+    return null;
+  }
 }
 
 /** Validates a raw row. A row we cannot understand, or one for another vault, is the same as no row: never guess "watched". */

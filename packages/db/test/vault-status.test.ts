@@ -28,7 +28,7 @@ const row = (policyId: string, over: Partial<VaultStatus> = {}): VaultStatus => 
   state: "watching",
   reason: null,
   lastError: null,
-  hf: "1.5000",
+  hf: "1500000000000000000",
   usdc: "10000000",
   usdcWallet: "1000000",
   gasWei: "1000000000000000",
@@ -57,7 +57,7 @@ describe("vault status store (JSON)", () => {
 
   it("malformed_rows_are_rejected_on_write_and_on_read", async () => {
     const s = new JsonVaultStatusStore(join(dir, "vs.json"));
-    await expect(s.upsert([row("a.near", { hf: "1.5" })])).rejects.toThrow(/hf/);
+    await expect(s.upsert([row("a.near", { hf: "1.5" as string })])).rejects.toThrow(/hf/);
     await writeFile(join(dir, "vs.json"), JSON.stringify([{ ...row("a.near"), state: "protected" }]));
     await expect(s.list()).rejects.toThrow(/state/);
   });

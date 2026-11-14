@@ -48,7 +48,7 @@ export interface VaultStatus {
   reason: VaultReason | null;
   /** Human-readable detail for `reason` (never a key, never a full quote). */
   lastError: string | null;
-  /** Borrower health factor, 4 decimals ("1.2345"); null when there is no debt or it was not read. */
+  /** Borrower health factor as Aave reports it, 1e18-scaled integer string ("1620000000000000000" = 1.62); null when there is no debt or it was not read. */
   hf: string | null;
   /** USDC (6dp integer string) in the vault on NEAR plus in the rescue wallet. */
   usdc: string;

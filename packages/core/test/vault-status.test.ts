@@ -8,7 +8,7 @@ const row = (over: Partial<VaultStatus> = {}): VaultStatus => ({
   state: "watching",
   reason: null,
   lastError: null,
-  hf: "1.5000",
+  hf: "1500000000000000000",
   usdc: "10000000",
   usdcWallet: "0",
   gasWei: "1000000000000000",

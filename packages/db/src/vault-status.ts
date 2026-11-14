@@ -42,7 +42,7 @@ export const vaultStatusSchema = z
       ])
       .nullable(),
     lastError: z.string().max(1000).nullable(),
-    hf: z.string().regex(/^\d+\.\d{4}$/, "expected a health factor like 1.2345").nullable(),
+    hf: z.string().regex(/^\d+$/, "expected a 1e18-scaled health factor integer string").nullable(),
     usdc: intString,
     usdcWallet: intString,
     gasWei: intString,
