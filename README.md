@@ -2,7 +2,7 @@
 
 **Backstop pulls your money from any chain to save your loan before it gets liquidated.**
 
-Hackathon prototype · unaudited · NEAR + Base / Arbitrum mainnet with tiny amounts
+Live on NEAR mainnet · Aave v3 on Base and Arbitrum · beta, invite-only, unaudited, tiny amounts
 
 <!-- DEMO GIF: add docs/assets/demo.gif after the first mainnet rescue -->
 
@@ -228,7 +228,7 @@ swap. Tests: `bridge_pays_the_service_fee_*`, `the_fee_rate_is_capped_at_50_bps_
 
 ## Limits and risks
 
-- Hackathon prototype, unaudited, not yet run on mainnet. Use tiny amounts.
+- Beta and unaudited. Use tiny amounts. The "Live proof" table above fills in as each mainnet step is confirmed on-chain.
 - Beta and unaudited: vault creation is invite-only for now.
 - The trigger is not enforced on-chain (NEAR cannot see the Base HF); the limits are.
 - A rescue that needs a bridge takes about a minute; a faster crash can liquidate first. USDC
@@ -256,9 +256,14 @@ More: [docs/litepaper.md](docs/litepaper.md) · [docs/site/08-roadmap.md](docs/s
 
 ## Tracks
 
-- Unstoppable DeFi
-- AI Security & Defense
-- Agent Economy
+- **Unstoppable DeFi.** A cross-chain loan guardian with no custodian: the NEAR policy contract holds the
+  limits, NEAR Intents moves the money, and no private key exists for the vault's Base address.
+- **AI Security & Defense.** The agent is boxed in by contract code, not by trust: it can only call `rescue`,
+  `fund_bridge` and `approve_pool`, every 1Click quote is signature-checked on-chain before it pays, and the
+  contract builds the only transactions it may sign.
+- **Agent Economy.** An autonomous agent does a real job (watch, decide, move, repay) under an owner's on-chain
+  budget: per-rescue and daily caps, cooldown, pause. It pays for cross-chain moves through NEAR Intents and
+  leaves a plain-language receipt per rescue (NEAR AI Cloud, with a template fallback).
 
 ## Built with
 
