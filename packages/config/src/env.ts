@@ -29,8 +29,28 @@ const nearAccountList = z
   .string()
   .refine((v) => splitList(v).every(isNearAccountId), "must be NEAR account ids separated by commas")
   .transform((v) => [...new Set(splitList(v))]);
+/**
+ * VAULT_ALLOWED_OWNERS: comma-separated NEAR accounts (trimmed, lowercased, empties dropped). A list with no
+ * entries is the same as unset (undefined = no allowlist = open); a non-empty list = invite-only.
+ */
+const allowedOwners = z
+  .string()
+  .transform((v) => [...new Set(splitList(v).map((s) => s.toLowerCase()))])
+  .superRefine((list, ctx) => {
+    const bad = list.filter((a) => !isNearAccountId(a));
+    if (bad.length) ctx.addIssue({ code: "custom", message: `contains invalid NEAR account id(s): ${bad.join(", ")}. Use ids like alice.near separated by commas, or leave it empty to keep creation open.` });
+  })
+  .transform((list) => (list.length ? list : undefined));
 const httpsUrl = z.string().refine(isHttpsUrl, "must be an https:// URL");
 const nearKey = z.string().startsWith("ed25519:", "must be an ed25519 key like ed25519:...");
+/** An ed25519 public key as NEAR prints it: `ed25519:` + base58 of 32 bytes (43 or 44 chars). */
+export const ED25519_PUBLIC_KEY_RE = /^ed25519:[1-9A-HJ-NP-Za-km-z]{43,44}$/;
+const ed25519PublicKey = z.string().regex(ED25519_PUBLIC_KEY_RE, "must be an ed25519 public key like ed25519:<base58>");
+/** sha256 of the policy wasm, 64 hex (stored lowercase). */
+const codeHash = z
+  .string()
+  .regex(/^[0-9a-fA-F]{64}$/, "must be the 64-hex sha256 of the policy wasm")
+  .transform((v) => v.toLowerCase());
 
 /** Comma-separated list of https URLs, as accepted in NEAR_RPC_URL / BASE_RPC_URL / ARBITRUM_RPC_URL. */
 const rpcListValue = z
@@ -66,8 +86,24 @@ const schema = z.object({
   DEPLOYER_ACCOUNT_ID: nearAccount.optional(),
   DEPLOYER_PRIVATE_KEY: nearKey.optional(),
   FACTORY_CONTRACT_ID: nearAccount.optional(),
-  /** Bot service: extra operator-made vaults to watch besides the factory's (comma-separated). */
+  /** Bot service: extra operator-made vaults to watch besides the created ones (comma-separated). */
   POLICY_CONTRACT_IDS: nearAccountList.optional(),
+  /**
+   * Bot service: sha256 of the published policy wasm. Every vault's code must hash to it. Required
+   * when FACTORY_CONTRACT_ID is not set (the factory's policy_code_hash() is used otherwise).
+   */
+  POLICY_CODE_HASH: codeHash.optional(),
+  /** Bot vault creator: path of the policy wasm it deploys (its sha256 must equal POLICY_CODE_HASH). */
+  POLICY_WASM_PATH: z.string().min(1).optional(),
+  /**
+   * Bot vault creator: private key whose public key users add to a new vault account. The bot deploys
+   * with it and deletes it from the vault in the same transaction. Host secret store only.
+   */
+  VAULT_DEPLOYER_PRIVATE_KEY: nearKey.optional(),
+  /** The public half the website shows to users; when set, the bot checks it matches VAULT_DEPLOYER_PRIVATE_KEY. */
+  NEXT_PUBLIC_VAULT_DEPLOYER_PK: ed25519PublicKey.optional(),
+  /** Vault creation requests when DATABASE_URL is not set (JSON file). */
+  VAULT_REQUESTS_FILE: z.string().default(join(REPO_ROOT, "vault-requests.json")),
   /** Bot service: operator alerts (Discord/Slack-style JSON webhook). Optional. */
   ALERT_WEBHOOK_URL: httpsUrl.optional(),
   /** Bot service: dead-man's switch, fetched (GET) once per pass, e.g. a healthchecks.io URL. Optional. */
@@ -90,6 +126,10 @@ const webSchema = z.object({
   DATABASE_URL: z.string().optional(),
   RESCUES_FILE: z.string().default(join(REPO_ROOT, "rescues.json")),
   VAULT_STATUS_FILE: z.string().default(join(REPO_ROOT, "vault-status.json")),
+  /** POST /api/vaults writes creation requests here when DATABASE_URL is not set. */
+  VAULT_REQUESTS_FILE: z.string().default(join(REPO_ROOT, "vault-requests.json")),
+  /** Invite-only vault creation: NEAR owner accounts allowed to create. Unset/empty = open to everyone. Server only. */
+  VAULT_ALLOWED_OWNERS: allowedOwners.optional(),
 });
 
 export type WebEnv = z.infer<typeof webSchema>;

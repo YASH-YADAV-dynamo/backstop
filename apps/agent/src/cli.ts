@@ -6,15 +6,17 @@
  *   pnpm demo --watch [--interval 30]   keep watching (pnpm --filter @backstop/agent start)
  *   pnpm demo --allow-keyed-rehearsal   accept a rehearsal policy that still has its ONE temporary key
  *                                       (deploy-policy --rehearsal; finalize it before real use)
- *   pnpm demo --service [--dry-run]     bot service: every vault from FACTORY_CONTRACT_ID + POLICY_CONTRACT_IDS
+ *   pnpm demo --service [--dry-run]     bot service: creates requested vaults (VAULT_DEPLOYER_PRIVATE_KEY) and
+ *                                       watches every created vault + FACTORY_CONTRACT_ID + POLICY_CONTRACT_IDS
  *                                       (pnpm --filter @backstop/agent start); see service.ts
  */
 import { parseArgs } from "node:util";
 import { NEAR, chainAddressUrl, loadEnv, loanChainById, requireEnv, rpcList } from "@backstop/config";
 import { assertChainId, evmClient, nearProvider, viewAccessKeys } from "@backstop/chains";
-import { acquireInstanceLock, openStore, openVaultStatusStore } from "@backstop/db";
+import { acquireInstanceLock, openStore, openVaultRequestStore, openVaultStatusStore } from "@backstop/db";
 import { deriveAddressOnChain, deriveEvmAddress } from "@backstop/signer";
 import { assertConfigMatches } from "./checks.js";
+import { expectedCodeHash } from "./discover.js";
 import { liveDeps } from "./deps.js";
 import { readPolicy } from "./policy.js";
 import { resumeSignedRepay, runOnce, type RunOptions } from "./rescue.js";
@@ -120,9 +122,8 @@ async function main(): Promise<void> {
 async function service(env: ReturnType<typeof loadEnv>, opts: RunOptions, intervalSecs: number): Promise<void> {
   const e = requireEnv(env, ["AGENT_ACCOUNT_ID"], "The bot service (the bot account every vault names as agent)");
   if (!opts.dryRun) requireEnv(env, ["AGENT_PRIVATE_KEY"], "A live service run (use --dry-run to try without keys)");
-  if (!env.FACTORY_CONTRACT_ID && !env.POLICY_CONTRACT_IDS?.length && !env.POLICY_CONTRACT_ID) {
-    throw new Error("The bot service needs FACTORY_CONTRACT_ID and/or POLICY_CONTRACT_IDS in .env (the vaults to watch).");
-  }
+  // Checked again (with the factory's answer) in liveServiceIO; failing here first avoids taking the lock for nothing.
+  if (!env.FACTORY_CONTRACT_ID && !env.POLICY_CODE_HASH) expectedCodeHash(null, undefined);
   const lock = await acquireInstanceLock(env);
   if (!lock) {
     console.error("Another Backstop bot instance is already running (instance lock held). Exiting.");
@@ -130,12 +131,18 @@ async function service(env: ReturnType<typeof loadEnv>, opts: RunOptions, interv
     return;
   }
   if (!env.DATABASE_URL) {
-    log("WARNING: DATABASE_URL is not set: rescues and vault status go to local JSON files, which a web app on another host cannot read.");
+    log("WARNING: DATABASE_URL is not set: rescues, vault status and vault requests go to local JSON files, which a web app on another host cannot read.");
   }
-  const [store, statusStore] = await Promise.all([openStore(env), openVaultStatusStore(env)]);
+  const [store, statusStore, requestStore] = await Promise.all([openStore(env), openVaultStatusStore(env), openVaultRequestStore(env)]);
   try {
-    const { io, factoryDefaultAgent } = await liveServiceIO(e, store, statusStore, log, opts);
+    const { io, factoryDefaultAgent, codeHash, deployerPublicKey } = await liveServiceIO(e, store, statusStore, requestStore, log, opts);
     log(`Backstop bot service${opts.dryRun ? " (DRY RUN: nothing is sent)" : ""} as ${e.AGENT_ACCOUNT_ID}; pass every ${intervalSecs}s.`);
+    log(`Admits only vaults whose code hash is ${codeHash}.`);
+    log(
+      deployerPublicKey === null
+        ? "Vault creation is off (VAULT_DEPLOYER_PRIVATE_KEY not set): requests stay pending."
+        : `Vault creation is on: deploys into accounts holding deploy key ${deployerPublicKey}${opts.dryRun ? " (not in a dry run)" : ""}.`,
+    );
     if (env.FACTORY_CONTRACT_ID) log(`Factory ${env.FACTORY_CONTRACT_ID} (default agent ${factoryDefaultAgent}).`);
     if (factoryDefaultAgent !== null && factoryDefaultAgent !== e.AGENT_ACCOUNT_ID) {
       log(`WARNING: the factory's default_agent is ${factoryDefaultAgent}, not ${e.AGENT_ACCOUNT_ID}: new vaults will be refused (AGENT_MISMATCH).`);
@@ -151,7 +158,7 @@ async function service(env: ReturnType<typeof loadEnv>, opts: RunOptions, interv
     });
     await svc.run(() => stopping);
   } finally {
-    await Promise.all([store.close(), statusStore.close()]);
+    await Promise.all([store.close(), statusStore.close(), requestStore.close()]);
     await lock.release();
   }
 }

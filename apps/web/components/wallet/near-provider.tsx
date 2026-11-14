@@ -5,37 +5,42 @@
  * access key, and every transaction is approved in the user's wallet (D6, D13).
  *
  * Wallet calls are made synchronously inside the caller's click handler (iOS Safari blocks popups
- * opened after an `await`): `send()` has no `await` before the wallet call, and the wallet object is
- * resolved at sign-in time, never at click time.
+ * opened after an `await`): `connect()` and `send()` have no `await` before the wallet call, and the
+ * wallet object is resolved at sign-in time, never at click time.
+ *
+ * One request at a time: `connect()` and `send()` each hold a single in-flight slot, so a double click
+ * cannot open a second wallet request. After WALLET_STALL_MS the UI offers a reset that frees the slot.
  */
 import { NEAR } from "@backstop/config/registry";
 import type { NearConnector, NearWalletBase } from "@hot-labs/near-connect";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { clearJournal, consumeRedirectParams, setJournalHash, startJournal, type RedirectResult } from "@/lib/pending-tx";
-import { explainContractError, gasUnits, type NearTx } from "@/lib/policy-client";
-import { errorText, isPopupBlocked, isUserRejection, parseOutcome } from "@/lib/wallet-errors";
+import { clearJournal, consumeRedirectParams, setJournalHash, startJournal, type JournalEntry, type RedirectResult } from "@/lib/pending-tx";
+import { gasUnits, type NearTx } from "@/lib/policy-client";
+import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
+import { createInFlightGuard, interpretNearError, interpretNearOutcomes, SEND_ALREADY_OPEN, WALLET_STALL_MS, type NearAnswer, type NearSendResult } from "@/lib/wallet-flow";
 
+export type { NearSendResult } from "@/lib/wallet-flow";
 export type NearSendRequest = { kind: string; txs: NearTx[] };
-
-export type NearSendResult =
-  | { status: "success"; hashes: string[] }
-  | { status: "rejected" }
-  /** The contract (or token) refused. `details` is the raw text. */
-  | { status: "failed"; message: string; details: string; hashes: string[] }
-  /** The wallet did not give us a final result: it may or may not have been sent. The journal keeps the action. */
-  | { status: "unknown"; message: string };
 
 export type NearState =
   | { status: "loading" }
   | { status: "signed-out"; error?: string }
   | { status: "signed-in"; accountId: string; walletName: string };
 
+/** "waiting": the picker or wallet is open; "slow": no answer after WALLET_STALL_MS (offer a reset). */
+export type ConnectPhase = "idle" | "waiting" | "slow";
+
 type NearContextValue = {
   state: NearState;
-  /** Opens the wallet picker. Call it directly from a click handler. */
+  /** Opens the wallet picker. Call it directly from a click handler. A second call while one is open does nothing. */
   connect: () => void;
+  connectPhase: ConnectPhase;
+  /** Stop waiting for a connect that never answered. The wallet may still show the old request. */
+  resetConnect: () => void;
   disconnect: () => Promise<void>;
   send: (req: NearSendRequest) => Promise<NearSendResult>;
+  /** Stop waiting for a send that never answered: frees the slot. The pending journal is kept (it may still go through). */
+  resetSend: () => void;
   /** Result of a redirect-style wallet that navigated back to this page (row 16), read once. */
   redirect: RedirectResult;
   /** Bumps when the NEAR account changes or signs out: dependants must drop in-flight UI (row 10). */
@@ -50,18 +55,38 @@ export function useNear(): NearContextValue {
   return ctx;
 }
 
+type TimerRef = { current: ReturnType<typeof setTimeout> | null };
+function clearTimer(ref: TimerRef): void {
+  if (ref.current) clearTimeout(ref.current);
+  ref.current = null;
+}
+
 export function NearWalletProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<NearState>({ status: "loading" });
   const [redirect, setRedirect] = useState<RedirectResult>(null);
   const [epoch, setEpoch] = useState(0);
+  const [connectPhase, setConnectPhase] = useState<ConnectPhase>("idle");
   const connectorRef = useRef<NearConnector | null>(null);
   const walletRef = useRef<NearWalletBase | null>(null);
   const accountRef = useRef<string | null>(null);
+  const connectGuard = useRef(createInFlightGuard());
+  const sendGuard = useRef(createInFlightGuard());
+  const connectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const applyAccount = useCallback((wallet: NearWalletBase | null, accountId: string | null) => {
     walletRef.current = wallet;
-    if (accountRef.current !== accountId) setEpoch((e) => e + 1);
+    if (accountRef.current !== accountId) {
+      setEpoch((e) => e + 1);
+      // A request opened for the previous account must not block the new one (its journal stays with that account).
+      sendGuard.current.reset();
+    }
     accountRef.current = accountId;
+    if (wallet && accountId) {
+      // Signed in: whatever connect was open has done its job.
+      connectGuard.current.reset();
+      clearTimer(connectTimer);
+      setConnectPhase("idle");
+    }
     setState(wallet && accountId ? { status: "signed-in", accountId, walletName: wallet.manifest.name } : { status: "signed-out" });
   }, []);
 
@@ -96,26 +121,51 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
     });
     return () => {
       cancelled = true;
+      clearTimer(connectTimer);
     };
   }, [applyAccount]);
 
   const connect = useCallback(() => {
     const connector = connectorRef.current;
     if (!connector) {
-      setState({ status: "signed-out", error: "The wallet list is still loading. Wait a second and try again." });
+      setState({ status: "signed-out", error: "The wallet list is still loading. Wait a second, then press Try again." });
       return;
     }
+    const token = connectGuard.current.begin();
+    if (token === null) return; // the picker or a wallet request is already open
+    setConnectPhase("waiting");
+    setState((s) => (s.status === "signed-out" && s.error ? { status: "signed-out" } : s));
+    clearTimer(connectTimer);
+    connectTimer.current = setTimeout(() => {
+      if (connectGuard.current.holds(token)) setConnectPhase("slow");
+    }, WALLET_STALL_MS);
     // Called synchronously from the click; the connector opens its own picker.
-    connector.connect().catch((err: unknown) => {
-      if (isUserRejection(err)) return; // closing the picker is not an error (row 6)
-      const text = errorText(err);
-      setState({
-        status: "signed-out",
-        error: isPopupBlocked(err)
-          ? "Your browser blocked the wallet popup. Allow popups for this site, or open this page in your wallet's browser."
-          : `Could not connect: ${text}`,
-      });
-    });
+    connector.connect().then(
+      () => {
+        if (!connectGuard.current.end(token)) return;
+        clearTimer(connectTimer);
+        setConnectPhase("idle");
+      },
+      (err: unknown) => {
+        if (!connectGuard.current.end(token)) return; // the user already pressed Reset: this answer is stale
+        clearTimer(connectTimer);
+        setConnectPhase("idle");
+        const { kind, message } = walletErrorMessage(err, "Could not connect");
+        if (kind === "rejected") return; // closing the picker is not an error (row 6)
+        setState((s) => (s.status === "signed-in" ? s : { status: "signed-out", error: message }));
+      },
+    );
+  }, []);
+
+  const resetConnect = useCallback(() => {
+    connectGuard.current.reset();
+    clearTimer(connectTimer);
+    setConnectPhase("idle");
+    setState((s) =>
+      s.status === "signed-in"
+        ? s
+        : { status: "signed-out", error: "Stopped waiting. If your wallet still shows a connection request, finish or reject it there, then press Try again." },
+    );
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -133,11 +183,13 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
     const wallet = walletRef.current;
     const signerId = accountRef.current;
     if (!wallet || !signerId) {
-      return Promise.resolve<NearSendResult>({ status: "failed", message: "Your NEAR wallet is not connected. Connect it and try again.", details: "no wallet", hashes: [] });
+      return Promise.resolve<NearSendResult>({ status: "failed", message: "Your NEAR wallet is not connected. Connect it, then try again.", details: "no wallet", hashes: [] });
     }
     const first = req.txs[0]?.calls[0];
-    if (!first) return Promise.resolve<NearSendResult>({ status: "failed", message: "Nothing to send.", details: "empty request", hashes: [] });
-    let journal;
+    if (!first) return Promise.resolve<NearSendResult>({ status: "failed", message: "Nothing to send. Close this window and start again.", details: "empty request", hashes: [] });
+    const token = sendGuard.current.begin();
+    if (token === null) return Promise.resolve<NearSendResult>({ status: "pending", message: SEND_ALREADY_OPEN });
+    let journal: JournalEntry;
     try {
       journal = startJournal({
         kind: req.kind,
@@ -148,6 +200,7 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
         args: req.txs,
       });
     } catch (err) {
+      sendGuard.current.end(token);
       return Promise.resolve<NearSendResult>({ status: "failed", message: errorText(err), details: "journal busy", hashes: [] });
     }
 
@@ -157,59 +210,39 @@ export function NearWalletProvider({ children }: { children: ReactNode }) {
         params: { methodName: c.methodName, args: c.args, gas: gasUnits(c), deposit: c.depositYocto },
       }));
 
-    const request: Promise<unknown[]> =
-      req.txs.length === 1
-        ? wallet
-            .signAndSendTransaction({ network: "mainnet", signerId, receiverId: req.txs[0]!.receiverId, actions: toActions(req.txs[0]!) })
-            .then((o: unknown) => [o])
-        : wallet
-            .signAndSendTransactions({
+    let request: Promise<unknown>;
+    try {
+      request =
+        req.txs.length === 1
+          ? wallet.signAndSendTransaction({ network: "mainnet", signerId, receiverId: req.txs[0]!.receiverId, actions: toActions(req.txs[0]!) })
+          : wallet.signAndSendTransactions({
               network: "mainnet",
               signerId,
               transactions: req.txs.map((t) => ({ receiverId: t.receiverId, actions: toActions(t) })),
-            })
-            .then((o: unknown[]) => o);
+            });
+    } catch (err) {
+      // A wallet that throws before returning a promise has not sent anything it could report.
+      request = Promise.reject(err);
+    }
 
+    // The journal is updated even when the answer arrives after a reset or an account switch: it belongs to `signerId`.
+    const settle = (answer: NearAnswer): NearSendResult => {
+      sendGuard.current.end(token);
+      if (answer.hash) setJournalHash(journal, answer.hash);
+      if (answer.clearJournal) clearJournal(signerId);
+      return answer.result;
+    };
     return request.then(
-      (outcomes): NearSendResult => {
-        const parsed = (Array.isArray(outcomes) ? outcomes : [outcomes]).map(parseOutcome);
-        const hashes = parsed.flatMap((p) => (p.hash ? [p.hash] : []));
-        if (hashes[0]) setJournalHash(journal, hashes[0]);
-        const failure = parsed.find((p) => p.failure)?.failure;
-        if (failure) {
-          clearJournal(signerId);
-          const { message } = explainContractError(failure);
-          return { status: "failed", message, details: failure, hashes };
-        }
-        if (hashes.length === 0) {
-          return {
-            status: "unknown",
-            message: "Your wallet did not report a result. If it asked you to approve, the transaction may be on its way; we will check the chain.",
-          };
-        }
-        clearJournal(signerId);
-        return { status: "success", hashes };
-      },
-      (err: unknown): NearSendResult => {
-        if (isUserRejection(err)) {
-          clearJournal(signerId);
-          return { status: "rejected" };
-        }
-        if (isPopupBlocked(err)) {
-          clearJournal(signerId);
-          return {
-            status: "failed",
-            message: "Your browser blocked the wallet popup. Allow popups for this site, or open this page in your wallet's browser.",
-            details: errorText(err),
-            hashes: [],
-          };
-        }
-        // Anything else may have happened after the wallet submitted (flaky network): keep the journal (row 14).
-        return { status: "unknown", message: `The wallet reported an error (${errorText(err)}). It may still have been sent; check your wallet's history before trying again.` };
-      },
+      (outcomes) => settle(interpretNearOutcomes(outcomes, req.txs.length)),
+      (err: unknown) => settle(interpretNearError(err)),
     );
   }, []);
 
-  const value = useMemo(() => ({ state, connect, disconnect, send, redirect, epoch }), [state, connect, disconnect, send, redirect, epoch]);
+  const resetSend = useCallback(() => sendGuard.current.reset(), []);
+
+  const value = useMemo(
+    () => ({ state, connect, connectPhase, resetConnect, disconnect, send, resetSend, redirect, epoch }),
+    [state, connect, connectPhase, resetConnect, disconnect, send, resetSend, redirect, epoch],
+  );
   return <NearContext.Provider value={value}>{children}</NearContext.Provider>;
 }

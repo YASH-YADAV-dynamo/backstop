@@ -5,6 +5,8 @@
  * code path. It re-reads chain state when it opens and every 15 s while open; if what the user
  * is looking at changes, the confirm button stays disabled until they accept the new numbers.
  * The wallet is called synchronously from the confirm click (no `await` before it: popup blockers).
+ * One wallet request at a time (a second click does nothing); after WALLET_STALL_MS without an answer the
+ * user can stop waiting, which keeps the pending journal (the request may still go through).
  */
 import { chainTxUrl, nearTxUrl, type LoanChain } from "@backstop/config/registry";
 import { useQueryClient } from "@tanstack/react-query";
@@ -23,7 +25,8 @@ import { gasUnits } from "@/lib/policy-client";
 import { wagmiConfig } from "@/lib/wagmi";
 import type { Prepared, PreparedEvm, PreparedNear, ReviewRequest } from "@/lib/review";
 import { groupAddress } from "@/lib/validate";
-import { errorText, isPopupBlocked, isRequestPending, isUserRejection } from "@/lib/wallet-errors";
+import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
+import { createInFlightGuard, ethereumWalletNearHint, WALLET_STALL_MS } from "@/lib/wallet-flow";
 
 const REFRESH_MS = 15_000;
 const RECEIPT_POLL_MS = 4_000;
@@ -35,6 +38,8 @@ type Phase =
   | { name: "success"; links: Array<{ label: string; href: string }> }
   | { name: "failed"; message: string; details?: string }
   | { name: "unknown"; message: string }
+  /** The wallet already had a request open; nothing was sent. "Try again" re-sends after the user clears it. */
+  | { name: "wallet-busy"; message: string }
   | { name: "evm-pending"; hash: `0x${string}`; chainId: number };
 
 /** Exactly what will be signed, for the "raw JSON" toggle. */
@@ -80,8 +85,12 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
   const [phase, setPhase] = useState<Phase>({ name: "reviewing" });
   const [notice, setNotice] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const startEpochs = useRef({ near: near.epoch, evm: evmEpoch });
+  const liveEpochs = useRef({ near: near.epoch, evm: evmEpoch });
   const journalAccount = useRef<string | null>(null);
+  const guard = useRef(createInFlightGuard());
+  const attempt = useRef(0);
 
   const load = useCallback((): void => {
     request.prepare().then(
@@ -104,10 +113,21 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
     return () => clearInterval(id);
   }, [load, phase.name]);
 
-  // Row 10: an account switch closes the dialog.
+  // Row 10: an account or network switch closes the dialog, and any answer still on its way is ignored.
   useEffect(() => {
+    liveEpochs.current = { near: near.epoch, evm: evmEpoch };
     if (near.epoch !== startEpochs.current.near || evmEpoch !== startEpochs.current.evm) onClose();
   }, [near.epoch, evmEpoch, onClose]);
+
+  // No answer for a while: say so, and offer a way out (the journal is kept, so nothing is lost).
+  useEffect(() => {
+    if (phase.name !== "waiting") return;
+    const t = setTimeout(() => setStalled(true), WALLET_STALL_MS);
+    return () => {
+      clearTimeout(t);
+      setStalled(false);
+    };
+  }, [phase.name]);
 
   // Poll the loan-chain receipt after an ETH transfer (row 14).
   useEffect(() => {
@@ -133,17 +153,37 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
 
   const changed = shown !== null && latest !== null && shown.ok && latest.ok && shown.fingerprint !== latest.fingerprint;
   const nowRefused = shown?.ok === true && latest?.ok === false;
-  const ready = shown?.ok === true && !changed && !nowRefused && phase.name === "reviewing";
+  const ready = shown?.ok === true && !changed && !nowRefused && (phase.name === "reviewing" || phase.name === "wallet-busy");
+
+  function stopWaiting() {
+    guard.current.reset();
+    if (shown?.ok && shown.network === "near") near.resetSend();
+    // The same attempt stays current: if the wallet answers later, this dialog still shows the real result.
+    setPhase({ name: "unknown", message: "Stopped waiting. Your wallet may still show the request; if you approve it there, it can still go through." });
+  }
 
   function confirm() {
     if (!ready || shown?.ok !== true) return;
+    const token = guard.current.begin();
+    if (token === null) return; // a second click while the wallet is open does nothing
+    const mine = ++attempt.current;
+    const startedAt = startEpochs.current;
+    /** False once a newer attempt started or the account or network changed: that answer must not touch this screen. */
+    const current = () => attempt.current === mine && liveEpochs.current.near === startedAt.near && liveEpochs.current.evm === startedAt.evm;
     setNotice(null);
     if (shown.network === "near") {
       setPhase({ name: "waiting" });
+      request.beforeSend?.();
       void near
         .send({ kind: request.kind, txs: shown.txs })
         .then((res) => {
-          if (res.status === "rejected") {
+          guard.current.end(token);
+          if (!current()) return;
+          if (res.status === "pending") {
+            request.onRejected?.(); // nothing was sent: undo what beforeSend remembered
+            setPhase({ name: "wallet-busy", message: res.message });
+          } else if (res.status === "rejected") {
+            request.onRejected?.();
             setPhase({ name: "reviewing" });
             setNotice("Cancelled in wallet. Your inputs are kept; review again when ready.");
           } else if (res.status === "success") {
@@ -160,10 +200,12 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
     }
     // EVM: ETH to the policy's derived address.
     if (identity.mode !== "wallet") {
+      guard.current.end(token);
       setNotice("Connect your wallet first, then try again.");
       return;
     }
     if (identity.chainId !== shown.chainId) {
+      guard.current.end(token);
       setNotice(`Your wallet is on chain ${identity.chainId ?? "unknown"}; this transaction is on ${networkName(shown.chainId)}. Switch networks, then try again.`);
       return;
     }
@@ -176,7 +218,10 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
         { to: shown.to, value: shown.valueWei, chainId: shown.chainId as (typeof wagmiConfig.chains)[number]["id"], ...(shown.data !== undefined && { data: shown.data }) },
         {
           onSuccess: (hash) => {
+            guard.current.end(token);
             setJournalHash(entry, hash);
+            request.onSubmitted?.(hash); // the transaction exists whatever this screen shows now
+            if (!current()) return; // the journal keeps the hash; the pending banner follows it up
             if (resolveChain(shown.chainId)) {
               setPhase({ name: "evm-pending", hash, chainId: shown.chainId });
               return;
@@ -187,23 +232,24 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
             setPhase({ name: "success", links: explorer ? [{ label: "View on the block explorer", href: `${explorer}/tx/${hash}` }] : [] });
           },
           onError: (err) => {
-            if (isUserRejection(err)) {
-              clearJournal(account);
+            guard.current.end(token);
+            // The wallet refused before sending (a "no", an open request, a blocked popup or an error): nothing is pending.
+            clearJournal(account);
+            if (!current()) return;
+            const { kind, message } = walletErrorMessage(err, "Your wallet could not send this");
+            if (kind === "rejected") {
               setPhase({ name: "reviewing" });
               setNotice("Cancelled in wallet. Your inputs are kept; review again when ready.");
-            } else if (isRequestPending(err)) {
-              setPhase({ name: "unknown", message: "Your wallet already has a request open. Open it and approve or reject there." });
+            } else if (kind === "pending") {
+              setPhase({ name: "wallet-busy", message });
             } else {
-              clearJournal(account);
-              setPhase({
-                name: "failed",
-                message: isPopupBlocked(err) ? "Your browser blocked the wallet popup. Allow popups for this site, or open this page in your wallet's browser." : `Your wallet could not send this: ${errorText(err)}`,
-              });
+              setPhase({ name: "failed", message });
             }
           },
         },
       );
     } catch (err) {
+      guard.current.end(token);
       setNotice(errorText(err));
     }
   }
@@ -212,6 +258,10 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
   const pendingChain = phase.name === "evm-pending" ? resolveChain(phase.chainId) : null;
   const finished = phase.name === "success" || phase.name === "failed";
   const busy = phase.name === "waiting" || phase.name === "evm-pending";
+  const nearHint =
+    shown && !shown.ok && shown.nearShort && near.state.status === "signed-in"
+      ? ethereumWalletNearHint({ walletName: near.state.walletName, accountId: near.state.accountId, ...shown.nearShort })
+      : null;
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !busy && onClose()}>
@@ -245,6 +295,7 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
               <div>
                 <p className="font-medium text-danger">This cannot be sent</p>
                 <p className="mt-1 text-muted-foreground">{shown.reason}</p>
+                {nearHint ? <p className="mt-2 text-muted-foreground">{nearHint}</p> : null}
                 <Button variant="outline" size="sm" className="mt-3" onClick={() => { setShown(null); load(); }}>Check again</Button>
               </div>
             </div>
@@ -300,9 +351,23 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
           {notice ? <p role="status" className="mt-3 text-sm text-muted-foreground">{notice}</p> : null}
 
           {phase.name === "waiting" ? (
-            <p role="status" className="mt-4 flex items-center gap-2 text-sm">
-              <Loader2 className="size-4 animate-spin" aria-hidden /> Waiting for your wallet. Approve or reject there.
-            </p>
+            <div role="status" className="mt-4 space-y-2 text-sm">
+              <p className="flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin" aria-hidden /> Waiting for your wallet. Approve or reject there.
+              </p>
+              {stalled ? (
+                <>
+                  <p className="text-warn">
+                    Still waiting for your wallet. Open it and look for the request. If you already approved it, it may still go through, so check
+                    your wallet&apos;s history before trying again.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={stopWaiting}>Stop waiting</Button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          {phase.name === "wallet-busy" ? (
+            <p role="alert" className="mt-4 text-sm text-warn">{phase.message}</p>
           ) : null}
           {phase.name === "evm-pending" ? (
             <p role="status" className="mt-4 text-sm">
@@ -347,7 +412,7 @@ export function ReviewDialog({ request, loanChain, onClose }: { request: ReviewR
               <>
                 <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
                 <Button onClick={confirm} disabled={!ready}>
-                  {phase.name === "waiting" ? "Waiting..." : "Approve in wallet"}
+                  {phase.name === "waiting" ? "Waiting for wallet..." : phase.name === "wallet-busy" ? "Try again" : "Approve in wallet"}
                 </Button>
               </>
             )}

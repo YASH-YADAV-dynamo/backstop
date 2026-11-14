@@ -17,9 +17,9 @@ export function parsePolicyList(raw: string | null): string[] {
 
 export const dedupe = (ids: readonly string[]): string[] => [...new Set(ids)];
 
-/** Every source in order: factory answer, saved list, the site's default policy. Invalid ids are dropped. */
-export function mergeKnown(factory: readonly string[] | undefined, saved: readonly string[], envDefault: string | undefined): string[] {
-  return dedupe([...(factory ?? []), ...saved, ...(envDefault ? [envDefault] : [])]).filter(isNearAccountId);
+/** Every source in order: vaults created here (ready requests), saved list, the site's default policy. Invalid ids are dropped. */
+export function mergeKnown(created: readonly string[] | undefined, saved: readonly string[], envDefault: string | undefined): string[] {
+  return dedupe([...(created ?? []), ...saved, ...(envDefault ? [envDefault] : [])]).filter(isNearAccountId);
 }
 
 /** Saved list after the user picked `id`: it moves to the front, so it is the default on the next visit. */

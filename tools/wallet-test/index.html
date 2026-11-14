@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEAR wallet create_account test</title>
+<style>
+  body{font:14px/1.5 system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;background:#111;color:#eee}
+  button{font:inherit;padding:8px 14px;margin:4px 6px 4px 0;cursor:pointer}
+  code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  pre{background:#000;border:1px solid #333;padding:10px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+  .box{border:1px solid #333;padding:10px 14px;margin:12px 0;border-radius:6px}
+  .warn{color:#fc6}
+  #verdict{font-size:20px;font-weight:bold;margin:8px 0}
+  .pass{color:#5d5}.fail{color:#f66}
+</style>
+</head>
+<body>
+<h1>NEAR mainnet: wallet signs <code>near.create_account</code></h1>
+<p class="warn">MAINNET. "Create test account" spends 0.1 NEAR plus gas from the connected wallet. Nothing is sent until you approve in the wallet.</p>
+
+<div class="box">
+  <h3>1. Wallet</h3>
+  <button id="connect">Connect wallet</button>
+  <button id="disconnect">Disconnect</button>
+  <div>Account: <b id="acct">not connected</b> | Wallet: <b id="wname">-</b></div>
+</div>
+
+<div class="box">
+  <h3>2. Throwaway key</h3>
+  <div>Public key: <code id="pub">generating...</code></div>
+  <p class="warn">Throwaway key: it controls only the test account created here. The secret is saved in this browser's localStorage under <code>backstop-wallet-test:throwaway-secret</code> so it can be recovered. Never reuse it.</p>
+  <button id="reveal">Show throwaway secret (for refund)</button>
+  <button id="regen">Generate new throwaway key</button>
+  <pre id="secret" hidden></pre>
+</div>
+
+<div class="box">
+  <h3>3. Create</h3>
+  <button id="create">Create test account (0.1 NEAR)</button>
+  <div id="verdict"></div>
+  <div id="finalvalue"></div>
+</div>
+
+<div class="box">
+  <h3>Log</h3>
+  <button id="copy">Copy log</button>
+  <pre id="log"></pre>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

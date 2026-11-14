@@ -1,4 +1,4 @@
-# Security model (v2 + vault factory in progress)
+# Security model (v2 + factory-less vault creation, not deployed)
 
 **Hackathon prototype, unaudited. Use tiny amounts.** Every claim below maps to code and a test in
 [JUDGES.md](JUDGES.md). Nothing in this document has run on mainnet yet; "pending" means the
@@ -14,7 +14,8 @@ funds outside the policy contract's limits.
 
 ```
 owner's NEAR wallet --ft_transfer_call / any-chain 1Click deposit--> POLICY (NEAR, no access keys)
-owner's NEAR wallet --create_policy (deposit, returned on close)--> FACTORY (NEAR, keyless) --creates--> POLICY
+owner's NEAR wallet --near.create_account (deposit, returned on close)--> VAULT ACCOUNT bkst-<20 hex>.near (holds only the bot's deploy key)
+BOT --one tx signed by the deploy key: DeployContract, new, activate, DeleteKey--> VAULT ACCOUNT (now POLICY, no keys)
 POLICY --withdraw (owner only, works while paused)--> owner
 BOT (one NEAR account, agent of every vault) --fund_bridge(1Click-signed quote)--> POLICY --ft_transfer--> 1Click deposit address
 1Click solver --Base USDC--> DERIVED ADDRESS (Base, controlled by the policy through v1.signer)
@@ -29,14 +30,14 @@ borrower = the user's own EVM address; the loan and collateral stay there
 | --- | --- | --- | --- |
 | Owner (NEAR wallet) | user's wallet only | Set limits / agent / borrower / bridge signer, pause, unpause, withdraw USDC and NEAR **to itself**. Every call except `pause` needs exactly 1 yoctoNEAR, so a browser-held function-call key cannot make them. | Call `rescue` / `fund_bridge` (unless it names itself agent). Redirect a withdrawal (no recipient parameter). |
 | Borrower (EVM wallet) | user's wallet only | Everything on the loan. | Anything on the policy or the derived address. |
-| Bot account (agent of every factory vault) | operator's bot host, in the host secret store | Its one full-access key acts as the bot NEAR account. On any vault that names the bot as agent it can call `rescue`, `fund_bridge`, `approve_pool`, inside that vault's limits. It also spends the bot account's own NEAR (kept at about 2 NEAR) and can delete the bot account. | Call owner methods (the vault checks the owner). Change agent, limits, owner or code. Withdraw from a vault. Attach a deposit to a vault (`rescue` and `fund_bridge` are not payable; `approve_pool` refuses an agent deposit). Pick the deposit address, recipient, refund account, or `to`, `value` or calldata of a Base tx. |
+| Bot account (agent of every self-serve vault) | operator's bot host, in the host secret store | Its one full-access key acts as the bot NEAR account. On any vault that names the bot as agent it can call `rescue`, `fund_bridge`, `approve_pool`, inside that vault's limits. It also spends the bot account's own NEAR (kept at about 2 NEAR) and can delete the bot account. | Call owner methods (the vault checks the owner). Change agent, limits, owner or code. Withdraw from a vault. Attach a deposit to a vault (`rescue` and `fund_bridge` are not payable; `approve_pool` refuses an agent deposit). Pick the deposit address, recipient, refund account, or `to`, `value` or calldata of a Base tx. |
 | Vault (policy account) keys | **none** | — | Nobody can sign as a vault or redeploy it. Only its code acts. |
-| Factory account keys | **none** (keyless, immutable) | Create vaults: `create_policy`, for any caller who attaches the deposit. Claim a recorded refund (the refund goes to the caller). | Change its config, chains, fee, default agent or code. It has no setters. Nothing sweeps unclaimed refunds (R14). |
-| Operator deployer key | operator machine, deploy time | Create and fund the factory, and operator-made policies. | Touch a live, finalized policy or the factory (no keys are left). **After the owner calls `close` on an operator-made policy, it can re-create the name (R11).** Factory vault names come from a counter, so they cannot be re-created. |
+| Vault-deploy key (ed25519) | Private half on the bot host (`VAULT_DEPLOYER_PRIVATE_KEY`); public half in the user's `create_account` (`NEXT_PUBLIC_VAULT_DEPLOYER_PK`). One shared key for all new vaults | Sign for a vault account between its creation and its deploy: deploy the pinned policy wasm, or delete the account with the owner as beneficiary (the refund path). It is deleted in the same transaction as the deploy, so account history shows AddKey (at creation) then DeleteKey. | Touch a live vault: after the deploy the key is not on the account. If it leaks, only vaults still mid-setup are at risk (about 2.95 NEAR each, computed in `vault-plan.ts`), never live vaults or their USDC. |
+| Operator deployer key | operator machine, deploy time | Create and fund operator-made policies (`deploy-policy`). | Touch a live, finalized policy (no keys are left). **After the owner calls `close` on an operator-made policy, it can re-create the name (R11).** |
 | 1Click quote key (ed25519) | 1Click | Sign quotes the policy will pay. | Make the policy pay more than the bridge limits, or route to anything but the policy's own addresses. |
 | MPC threshold key | NEAR MPC network | Sign any hash the policy submits. | — (base trust assumption of Chain Signatures) |
 
-The web app holds no secrets and never asks for a function-call key. The agent and the web both
+The web app holds no secrets (it holds only the deploy *public* key) and never asks for a function-call key. The agent and the web both
 refuse a policy account that has any access key (the agent accepts exactly one only with
 `--allow-keyed-rehearsal`, see below).
 
@@ -76,14 +77,18 @@ needed for storage. Deposits: any sender may deposit USDC (plain `ft_transfer` o
 **Activation** computes the derived address on-chain from `v1.signer.derived_public_key`; it is
 never passed in.
 
-**The factory** (`contracts/factory`, in progress; not deployed) creates each vault in one
-transaction with no `AddKey`, deploys the embedded policy wasm, and calls `new` with the owner taken
-from the caller. The caller cannot pick the owner, agent, name or code. The vault's name is
-`<chain>-<n>.<factory>`, where `n` comes from a counter that is seeded with the factory's init block
-height and never reused. `activate` and the USDC storage registration run in the factory's callback,
-not in the create batch, because a failed `activate` must not trigger a refund of NEAR the factory no
-longer holds. A failed create refunds the whole deposit to the caller, or records a refund the caller
-claims with `claim_refund`.
+**Self-serve creation (factory-less; code written, not deployed).** The user's wallet signs one
+`near.create_account` for `bkst-<20 hex>.near` with the bot's deploy public key and the deposit (about 2.95
+NEAR, computed from the constants in `packages/config/src/vault-plan.ts`). The site holds no key. The bot, in
+one transaction signed by the deploy key on the vault account, runs `DeployContract` (policy wasm, sha256
+must equal the pinned `POLICY_CODE_HASH`), `new` (owner = the user, agent = the bot), `activate` and
+`DeleteKey`, so the account ends keyless. The bot first checks that the account has no code, exactly the
+deploy key and at least the deposit. After 3 failed attempts it deletes the account with the owner as
+beneficiary, only while the deploy key is still on it. The bot discovers vaults from the database and
+refuses any vault whose code hash is not `POLICY_CODE_HASH`. The vault name is `bkst-` + the first 20 hex of
+sha256 over (owner, chain, borrower, limits, salt) (`packages/core/src/vault-name.ts`); the site, API and bot
+recompute it, so a request whose fields were changed after signing does not match its vault id and is
+refused (argument spoofing). 20 hex is 80 bits of the hash.
 
 ## Any-chain deposits (fund from any chain)
 
@@ -105,7 +110,8 @@ and not used: it cannot target NEAR yet.
 | 1Click | With the bot key too: up to `daily_cap` per day to an attacker deposit address until paused. Alone: funds in flight can be withheld. | `pause()`; `set_bridge_signer` after a key rotation. |
 | A NEAR or Base RPC | Rescue when not needed, or no rescue. Cannot change what the policy signs or pays. | Built-in fallback RPC lists. |
 | MPC network | Can sign anything for the derived address: transient USDC and gas ETH there. The loan is not there. | Keep that balance small. |
-| Operator | Same as bot + website. Can stop running the bot, and can set the factory's fee account and chain list at deploy time (each fixed after deploy). | Withdraw; run your own agent with `set_agent`. |
+| Vault-deploy key (leaked) | Vaults still mid-setup (account created, not yet deployed): an attacker could deploy other code into them or delete them to any beneficiary, up to about 2.95 NEAR each. Live vaults are unaffected: the key is not on them. | Operator: stop the bot and rotate the key (new `VAULT_DEPLOYER_PRIVATE_KEY` and `NEXT_PUBLIC_VAULT_DEPLOYER_PK`). Accounts created with the old key stay exposed until deployed or deleted. |
+| Operator | Same as bot + website. Can stop running the bot, and sets the fee account written into new vaults. | Withdraw; run your own agent with `set_agent`. |
 
 ## First deploy: keyed rehearsal, then keyless
 
@@ -117,14 +123,12 @@ replaces the code. Then `deploy-policy --finalize` deletes the key and checks th
 empty. Until finalized, the key holder bypasses every limit: do not fund a rehearsal policy beyond
 test amounts.
 
-The factory follows the same rule once it is written: it may first be deployed with a rehearsal key
-that is deleted by `--finalize`, and the web refuses any factory that has keys. The factory deploy
-script is planned, not yet written. **Pending:** no factory has been deployed and no vault has been
-created on mainnet.
+Self-serve vaults need no rehearsal key: the deploy key is deleted in the same transaction as the deploy.
+**Pending:** no self-serve vault has been created on mainnet.
 
 ## Security review (2026-11-13, internal, not an audit)
 
-No Critical or High finding for the policy contract. The vault factory and the multi-vault bot
+No Critical or High finding for the policy contract. The factory-less creation flow and the multi-vault bot
 service were added on 2026-11-14 and have **not** been reviewed yet.
 
 | # | Finding | Status |
@@ -155,8 +159,8 @@ service were added on 2026-11-14 and have **not** been reviewed yet.
   removes the bridge from the critical path.
 - **R8 Held NEAR.** About 2.8 NEAR of code storage sits in each policy while it exists. `close`
   (owner only, paused, 1 h after the last sign or bridge request, USDC withdrawn) deletes the
-  policy and sends all its NEAR to the owner; there is no beneficiary parameter. For factory vaults
-  the owner's deposit comes back this way, less about 0.007 NEAR that is never returned.
+  policy and sends all its NEAR to the owner; there is no beneficiary parameter. For self-serve vaults
+  the owner's deposit comes back this way, less the deploy gas (estimated 0.01-0.03 NEAR, not measured).
 - **R9 No sweep** (F3).
 - **R10 Unaudited, built in a day.**
 - **R11 Name re-creation after `close`** (operator-made policies only). A policy made by the operator
@@ -164,7 +168,8 @@ service were added on 2026-11-14 and have **not** been reviewed yet.
   code, and that code would control the same derived Base address and any USDC that later arrives under
   the old name. Funds inside a live policy are not affected. Leftovers (Base USDC/ETH that cannot be
   swept, a late 1Click refund) are exposed. Close only after emptying the Base address; for third-party
-  users, use the factory (R14) rather than creating the policy under the operator's account.
+  users, use self-serve creation (R14) rather than creating the policy under the operator's account, but
+  note R14 has the same name issue.
 - **R12 `close` can stop working.** Each accepted quote adds about 73 B of state that is never
   pruned; after roughly 120 lifetime bridges `DeleteAccount` exceeds NEAR's 10 KB limit and fails.
   Nothing is lost (funds stay withdrawable), the NEAR deposit just stays.
@@ -173,19 +178,20 @@ service were added on 2026-11-14 and have **not** been reviewed yet.
   compromised or greedy agent can therefore move `daily_cap` plus the fee per day. If the operator who
   runs the agent is also the fee recipient, it earns up to 0.5% of `daily_cap` per day by bridging
   without need; the owner can lower the cap or pause. The fee is not refunded if 1Click refunds.
-  Factory vaults take their fee rate and fee account from the factory config, so every factory vault
-  pays the same fee account; the rate is fixed at creation and capped at 0.50%.
-- **R14 The factory is keyless and immutable (planned, not deployed).** A bug in the factory cannot be
-  fixed. Its chain allow-list is fixed at `new`, so adding a chain means a new factory and users move
-  their vaults (withdraw, then create). Unclaimed refunds stay in the factory until the owner calls
-  `claim_refund`; no method sweeps them, so an owner who never claims leaves that NEAR there. A refund
-  is recorded when the factory cannot pay it at once (`refund_pending`), and only the owner's account
-  can claim it. The factory's policy code is the embedded wasm; `policy_code_hash` pins it.
-- **R15 Names and privacy (factory).** A vault's name is `<chain>-<n>.<factory>`: the chain and a
-  creation counter. The name reveals how many vaults were created, and the loan address the user
-  supplies is in the create transaction and in the vault's state. Both are public on-chain. Names are
-  never chosen by the caller, so they cannot be front-run, collide, or reveal an owner's account name.
-- **R16 The borrower address is not proven.** The factory does not check that the owner controls the
+  Self-serve vaults take their fee account and rate from the bot's config (`FEE_ACCOUNT_ID`, `FEE_BPS`), so
+  every one pays the same fee account; the rate is fixed at creation and capped at 0.50%.
+- **R14 A closed vault's name can be registered again by anyone.** Self-serve vaults are top-level
+  `bkst-<hash>.near` accounts. After `close` deletes the account, anyone can create that name again with
+  any code. The Base rescue wallet is derived from the NEAR account id (`v1.signer`, path
+  `backstop-base-1`), so the new account controls the same Base address and anything that later arrives
+  there. **Empty the derived wallet (USDC and gas ETH) before closing.** There is no sweep (R9); the only way
+  out is repayment, e.g. the owner names itself agent and calls `rescue`. Funds inside a live vault are not affected. The name commitment does
+  not prevent this: it binds a name to its arguments, not to a single use.
+- **R15 Names and privacy.** A vault's name is a hash of (owner, chain, borrower, limits, salt). It does not
+  reveal the owner, but the owner, the loan address and the limits are in the bot's request and in the
+  vault's state, which are public on-chain once deployed. The salt is random, so names are not
+  guessable from the inputs.
+- **R16 The borrower address is not proven.** Creation does not check that the owner controls the
   loan address (no signature is asked for). Anyone can repay any Aave loan on its owner's behalf, so
   a vault named at someone else's loan repays that loan with the owner's USDC. The web checks that the
   loan has USDC variable debt on the chain, not who owns it.
@@ -204,11 +210,11 @@ service were added on 2026-11-14 and have **not** been reviewed yet.
 - Gas use of `fund_bridge`, `activate`, `withdraw` on mainnet (U3; mitigated by F1).
 - NEAR Connect "Ethereum Wallets" accounts can sign owner calls with 1 yoctoNEAR (U11). The web
   lists that wallet; the docs claim nothing until tested.
-- Factory `create_policy` on mainnet: the 300 TGas budget, the refund path when `activate` or the USDC
-  storage registration fails, the order of the runtime refund and the callback in one block (U13),
-  and `claim_refund` (pending).
+- Factory-less creation on mainnet: the wallet's `near.create_account` with the deploy key and deposit, the
+  deploy transaction (gas, size limit for a 276,925-byte `DeployContract`), the refund path on failure, and
+  wallet support for the call. Nothing here has run (pending).
 - One bot account, with a full-access key, serving several vaults in one pass with no nonce collisions
-  (the multi-vault service is in progress, pending).
+  (pending).
 
 ## Web
 
@@ -217,6 +223,5 @@ No secrets in the web process; `NEXT_PUBLIC_*` values are only ids and URLs. Enf
 HSTS. The CSP (with `frame-ancestors 'none'`) ships as **Report-Only** until every wallet has been
 tested against it. It allows `'unsafe-inline'` scripts and `https:` connections because NEAR Connect
 runs wallet adapters as inline scripts in sandboxed iframes; nonce-based CSP is future work. Addresses are never truncated in
-a review dialog. One click = at most one wallet prompt. The planned create-vault flow reads the factory
-and refuses to create a vault unless the factory has no keys and its chains, pool, USDC and fee match
-the site's registry (pending).
+a review dialog. One click = at most one wallet prompt. The create-vault flow asks the wallet for one `near.create_account` and posts the fields to `/api/vaults`; the
+server refuses a request whose fields do not hash to the vault name. Not tested with real wallets.

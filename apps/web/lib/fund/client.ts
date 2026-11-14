@@ -72,6 +72,12 @@ export async function verifyQuoteInBrowser(q: QuoteView): Promise<BrowserCheck> 
     q.depositMemo,
   );
   if (mismatches.length) return { ok: false, reason: `The signed quote does not match what is shown (${mismatches.join("; ")}).` };
+  return verifySignatureInBrowser(q.canonical, q.signature);
+}
+
+/** Ed25519 check of a 1Click canonical quote string with WebCrypto ("unsupported" when the browser has no Ed25519; the server has already verified it). */
+export async function verifySignatureInBrowser(canonical: string, signature: string): Promise<BrowserCheck> {
+  const q = { canonical, signature };
   let sig: Uint8Array;
   let pk: Uint8Array;
   try {

@@ -14,6 +14,15 @@ a liquidation takes your collateral plus a bonus. Repaying a little earlier avoi
 
 Bots can repay for you, but they usually hold a key that can also move your money.
 
+## Why Backstop
+
+- **Your loan stays yours.** It stays at your own address. Backstop never takes custody of it.
+- **No key to steal.** The vault's Base address is derived from a NEAR contract with NEAR Chain Signatures, so no private key for it exists anywhere. The contract builds the only transactions it may sign.
+- **Limits enforced on-chain.** Maximum per rescue, daily cap, cooldown and pause are checked by the contract, not by a bot's good behaviour.
+- **Fund it from the chain you already use.** NEAR Intents moves your stablecoins across chains for you, with no manual bridge or swap.
+- **Every rescue leaves a receipt.** Health factor before and after, timestamps and transaction links, in plain words.
+- **Built to grow.** A new lending protocol or chain is one new adapter, not a rewrite.
+
 ## How it works
 
 1. **Set up in your own wallets.** Connect a NEAR wallet and your EVM wallet at `/app`. You never
@@ -30,7 +39,7 @@ Bots can repay for you, but they usually hold a key that can also move your mone
    `repay(USDC, amount, 2, your_address)` and `approve(Aave Pool, daily_cap)` — and gets them signed
    by NEAR Chain Signatures (`v1.signer`). The agent broadcasts. Your debt drops, HF rises.
 
-The policy account has **no access keys**, so nobody (the operator included) can bypass its code.
+Once set up, the policy account has **no access keys**, so nobody (the operator included) can bypass its code.
 The vault accepts only `rescue`, `fund_bridge` and `approve_pool` from the agent, nothing else.
 
 ### Architecture
@@ -141,6 +150,7 @@ cp .env.example .env          # every variable is documented there; no user keys
 pnpm test                     # TypeScript tests (all packages, agent, scripts, web)
 pnpm contract:test            # policy contract unit tests (cargo)
 pnpm contract:build           # policy wasm
+pnpm policy:build:wsl         # Windows: builds the policy wasm in WSL Fedora (scripts/wsl-build-policy.sh)
 
 pnpm --filter @backstop/web dev                     # site + /app on http://localhost:3000
 pnpm demo --dry-run           # agent: read HF, decide, print what it would do; sends nothing, needs no keys
@@ -189,7 +199,9 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Security model
 
 - **No user keys anywhere.** Users approve transactions in their own wallets. The policy account is
-  created with no access key, in one transaction that also deploys and initialises it.
+  left with no access key after setup: operator-made policies are created keyless in one transaction; self-serve
+  vaults are created by your wallet with a shared setup key (one key for every vault) that the bot removes in the same transaction that
+  deploys the policy (code written and unit-tested, not run on mainnet). Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **The contract builds every Base transaction.** `to`, `value = 0`, calldata, chain id; the agent
   only picks nonce and fees, under on-chain caps. The signature is ecrecovered against the policy's
   Base address before it is returned.
@@ -217,6 +229,7 @@ swap. Tests: `bridge_pays_the_service_fee_*`, `the_fee_rate_is_capped_at_50_bps_
 ## Limits and risks
 
 - Hackathon prototype, unaudited, not yet run on mainnet. Use tiny amounts.
+- Beta and unaudited: vault creation is invite-only for now.
 - The trigger is not enforced on-chain (NEAR cannot see the Base HF); the limits are.
 - A rescue that needs a bridge takes about a minute; a faster crash can liquidate first. USDC
   already at the policy's Base address removes the bridge from the critical path.

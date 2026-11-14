@@ -10,8 +10,9 @@ import { chainOrDefault } from "@/lib/chain";
 import { mergeKnown, parsePolicyList, withChosen, without } from "@/lib/known-policies";
 import { failedChecks, type Check, type PolicySnapshot } from "@/lib/policy-client";
 import { PUBLIC_ENV } from "@/lib/public-env";
-import { useFactoryPolicies, usePolicy } from "@/lib/queries";
+import { usePolicy, useVaultRequests } from "@/lib/queries";
 import type { ReviewRequest } from "@/lib/review";
+import type { RequestView } from "@/lib/vault-requests";
 import { isNearAccountId } from "@/lib/validate";
 import { useLocalString } from "@/lib/use-client";
 
@@ -21,8 +22,10 @@ type Ctx = {
   /** Connected NEAR account, or null. */
   owner: string | null;
   policyId: string | null;
-  /** Every policy known for this owner (factory, saved on this device, site default), one per chain. */
+  /** Every policy known for this owner (vaults created here, saved on this device, site default). */
   known: string[];
+  /** This owner's vault creation requests, every status (null until read). */
+  requests: RequestView[] | null;
   /** Select a policy (and remember it). Selecting a policy on another chain switches the loan chain. */
   choose: (id: string) => void;
   /** Stop listing a policy on this device. */
@@ -30,9 +33,9 @@ type Ctx = {
   query: UseQueryResult<PolicyData>;
   /** The loan chain of the loaded policy (the registry default until one is loaded, or if the policy names an unsupported chain). */
   chain: LoanChain;
-  factoryError: boolean;
-  /** The factory is still listing this account's vaults. */
-  factoryLoading: boolean;
+  requestsError: boolean;
+  /** The vault service is still listing this account's vaults. */
+  requestsLoading: boolean;
   snap: PolicySnapshot | null;
   checks: Check[] | null;
   /** Connected account is the policy's owner. */
@@ -60,15 +63,16 @@ export function PolicyProvider({ children }: { children: ReactNode }) {
   const owner = nearWallet.state.status === "signed-in" ? nearWallet.state.accountId : null;
   const [savedRaw, setSavedRaw] = useLocalString(owner ? `backstop.policies.${owner}` : null);
   const [legacy, setLegacy] = useLocalString(owner ? `backstop.policy.${owner}` : null);
-  const factory = useFactoryPolicies(owner);
+  const requests = useVaultRequests(owner);
   const [picked, setPicked] = useState<string | null>(null);
   const [review, setReview] = useState<{ id: number; policyId: string | null; request: ReviewRequest } | null>(null);
 
   // The single-policy key of earlier versions counts as the first saved policy; the first write replaces it.
   const saved = useMemo(() => withLegacy(parsePolicyList(savedRaw), legacy), [savedRaw, legacy]);
-  const known = useMemo(() => mergeKnown(factory.data, saved, PUBLIC_ENV.policyId), [factory.data, saved]);
+  const ready = useMemo(() => requests.data?.filter((r) => r.status === "ready").map((r) => r.vaultId), [requests.data]);
+  const known = useMemo(() => mergeKnown(ready, saved, PUBLIC_ENV.policyId), [ready, saved]);
   const policyId = owner ? (picked ?? saved[0] ?? known[0] ?? null) : null;
-  const query = usePolicy(policyId);
+  const query = usePolicy(policyId, owner);
 
   const store = useCallback(
     (next: string[]) => {
@@ -106,12 +110,13 @@ export function PolicyProvider({ children }: { children: ReactNode }) {
       owner,
       policyId,
       known,
+      requests: requests.data ?? null,
       choose,
       forget,
       query,
       chain,
-      factoryError: factory.isError,
-      factoryLoading: factory.isLoading,
+      requestsError: requests.isError,
+      requestsLoading: requests.isLoading,
       snap,
       checks,
       owned: Boolean(snap && owner && snap.config.owner === owner),
@@ -121,7 +126,7 @@ export function PolicyProvider({ children }: { children: ReactNode }) {
       openReview,
       reviewOpen: activeReview !== null,
     }),
-    [owner, policyId, known, chain, choose, forget, query, factory.isError, factory.isLoading, snap, checks, openReview, activeReview],
+    [owner, policyId, known, requests.data, chain, choose, forget, query, requests.isError, requests.isLoading, snap, checks, openReview, activeReview],
   );
 
   return (

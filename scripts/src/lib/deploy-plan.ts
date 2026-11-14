@@ -4,24 +4,13 @@
  */
 import { PublicKey, actions, teraToGas, type Action } from "near-api-js";
 import { getAddress, isAddress } from "viem";
-import { FEE, NEAR, ONE_CLICK, POLICY, isNearAccountId, type LoanChain } from "@backstop/config";
+import { NEW_TGAS, POLICY, isNearAccountId, policyInitArgs, type LoanChain } from "@backstop/config";
 import type { LimitsJson } from "./limits.js";
 
+// The budget and `new` args are shared with the bot's vault creator (packages/config/src/vault-plan.ts).
+export { DEPLOYER_GAS_RESERVE_YOCTO, NEW_TGAS, SPARE_YOCTO, STATE_MARGIN_YOCTO, deployBudget, type DeployBudget } from "@backstop/config";
+
 const YOCTO_PER_NEAR = 10n ** 24n;
-const MILLI = YOCTO_PER_NEAR / 1000n;
-
-/** Contract state after `new` + `activate` is ~1 KB; 0.05 NEAR covers it with room to spare. */
-export const STATE_MARGIN_YOCTO = 50n * MILLI;
-/**
- * Spare balance at creation (C.13): MPC deposits, used-quote entries, token storage for 1Click
- * deposit addresses (~0.002 NEAR per bridge, so ~125 bridges). Withdrawable with withdraw_near;
- * anyone can top it up.
- */
-export const SPARE_YOCTO = 100n * MILLI;
-/** Deployer-side gas for both transactions (prepaid 80 + 30 TGas at <= 0.0001 NEAR/TGas, plus deploy fees). */
-export const DEPLOYER_GAS_RESERVE_YOCTO = 20n * MILLI;
-
-export const NEW_TGAS = 30;
 
 export interface DeployInput {
   /** The chain the borrower's Aave loan lives on (D29): one policy per (user, chain). */
@@ -61,54 +50,8 @@ export function initArgs(input: DeployInput): Record<string, unknown> {
     if (!isNearAccountId(id)) throw new Error(`${flag} must be a NEAR account id like alice.near, got "${id}".`);
   }
   if (!isNearAccountId(input.feeAccount)) throw new Error(`FEE_ACCOUNT_ID must be a NEAR account id, got "${input.feeAccount}".`);
-  if (!Number.isInteger(input.feeBps) || input.feeBps < 0 || input.feeBps > FEE.maxBps) {
-    throw new Error(`FEE_BPS must be a whole number from 0 to ${FEE.maxBps} (the contract's cap), got ${input.feeBps}.`);
-  }
   if (!isAddress(input.borrower)) throw new Error(`--borrower must be the 0x ${input.chain.name} address that holds the Aave loan, got "${input.borrower}".`);
-  return {
-    owner: input.owner,
-    agent: input.agent,
-    on_behalf_of: getAddress(input.borrower),
-    chain_id: input.chain.chainId,
-    aave_pool: input.chain.aave.pool,
-    usdc_base: input.chain.aave.usdc,
-    usdc_near: NEAR.usdcToken,
-    bridge_dest_asset: input.chain.usdcAssetId,
-    bridge_signer_pk: ONE_CLICK.managerPublicKey,
-    mpc_contract: NEAR.mpcContract,
-    derivation_path: NEAR.derivationPath,
-    limits: input.limits,
-    fee_account: input.feeAccount,
-    fee_bps: input.feeBps,
-  };
-}
-
-export interface DeployBudget {
-  /** Locked for good: the account has no key, so the code can never be removed. */
-  codeStake: bigint;
-  stateMargin: bigint;
-  spare: bigint;
-  /** The `Transfer` action: codeStake + stateMargin + spare. */
-  transfer: bigint;
-  /** USDC storage_deposit for the policy (second transaction). */
-  storageDeposit: bigint;
-  gasReserve: bigint;
-  /** What the deployer account must hold on top of its own storage. */
-  deployerNeeds: bigint;
-}
-
-export function deployBudget(codeBytes: number, perByteYocto: bigint, storageDepositYocto: bigint): DeployBudget {
-  const codeStake = BigInt(codeBytes) * perByteYocto;
-  const transfer = codeStake + STATE_MARGIN_YOCTO + SPARE_YOCTO;
-  return {
-    codeStake,
-    stateMargin: STATE_MARGIN_YOCTO,
-    spare: SPARE_YOCTO,
-    transfer,
-    storageDeposit: storageDepositYocto,
-    gasReserve: DEPLOYER_GAS_RESERVE_YOCTO,
-    deployerNeeds: transfer + storageDepositYocto + DEPLOYER_GAS_RESERVE_YOCTO,
-  };
+  return policyInitArgs({ ...input, borrower: getAddress(input.borrower) });
 }
 
 /**

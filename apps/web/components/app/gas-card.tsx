@@ -9,7 +9,7 @@ import { useEvmIdentity } from "@/components/app/evm-identity";
 import { usePolicyContext } from "@/components/app/policy-context";
 import { Button } from "@/components/ui/button";
 import { prepareGasTopUp } from "@/lib/review";
-import { errorText, isUserRejection } from "@/lib/wallet-errors";
+import { walletErrorMessage } from "@/lib/wallet-errors";
 
 /** Asks the connected wallet to switch to the loaded vault's loan chain. Only the gas top-up button uses it (J.4). */
 function useSwitchToLoanChain() {
@@ -23,7 +23,7 @@ function useSwitchToLoanChain() {
     // No review opens afterwards: the chain change closes open dialogs, so the same button becomes "Review ETH transfer".
     switchChain(
       { chainId: chain.chainId },
-      { onError: (err) => setNote(isUserRejection(err) ? "Cancelled in wallet." : `Your wallet would not switch: ${errorText(err)}`) },
+      { onError: (err) => setNote(walletErrorMessage(err, "Your wallet would not switch", "the switch button again").message) },
     );
   }
   return { onSwitch, switching, note };

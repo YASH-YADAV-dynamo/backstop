@@ -1,9 +1,11 @@
 /**
  * Vault discovery and admission for the bot service (design v3 1.1).
- * Discovery: factory `list_policies` paged up to `policy_count` (v2 K.2), plus POLICY_CONTRACT_IDS /
+ * Discovery: vaults the bot created and admitted (`vault_requests` rows that are ready), the optional
+ * factory's `list_policies` paged up to `policy_count` (v2 K.2), plus POLICY_CONTRACT_IDS /
  * POLICY_CONTRACT_ID for operator-made vaults. Admission: the D.3 checks (`assertConfigMatches`), no
  * access keys at all (no rehearsal exception here), `agent` = the bot account, and the account's code
- * hash = the factory's `policy_code_hash()`. A refused vault is never called; the reason is published.
+ * hash = the published policy code hash (the factory's `policy_code_hash()`, else POLICY_CODE_HASH).
+ * A refused vault is never called; the reason is published.
  */
 import { z } from "zod";
 import type { Address } from "viem";
@@ -56,12 +58,17 @@ export interface VaultSources {
   factoryId?: string | undefined;
   /** POLICY_CONTRACT_IDS plus POLICY_CONTRACT_ID. */
   policyIds: readonly string[];
+  /** Vault ids of ready creation requests (the bot deployed and admitted them). */
+  created?: () => Promise<string[]>;
 }
 
-/** Every vault id to watch, de-duplicated, factory vaults first. */
+/** Every vault id to watch, de-duplicated: created vaults, then factory vaults, then operator vaults. */
 export async function discoverVaults(view: ViewFn, sources: VaultSources): Promise<string[]> {
-  const fromFactory = sources.factoryId ? (await listFactoryVaults(view, sources.factoryId)).map((e) => e.policy) : [];
-  return [...new Set([...fromFactory, ...sources.policyIds])];
+  const [created, fromFactory] = await Promise.all([
+    sources.created ? sources.created() : Promise.resolve([]),
+    sources.factoryId ? listFactoryVaults(view, sources.factoryId).then((list) => list.map((e) => e.policy)) : Promise.resolve([]),
+  ]);
+  return [...new Set([...created, ...fromFactory, ...sources.policyIds])];
 }
 
 /** What admission reads about one vault (live: NEAR RPC + chainsig.js + v1.signer view). */
@@ -81,8 +88,26 @@ export type Admission =
 export interface AdmitExpect {
   /** AGENT_ACCOUNT_ID: the bot account every admitted vault must name as `agent`. */
   botAccountId: string;
-  /** The factory's policy_code_hash(); null when no factory is configured (operator vaults only). */
-  codeHash: string | null;
+  /**
+   * The published policy code hash (64 lowercase hex): the factory's policy_code_hash(), else
+   * POLICY_CODE_HASH. Never optional: the service refuses to start without one (`expectedCodeHash`).
+   */
+  codeHash: string;
+}
+
+/**
+ * The code hash every vault must have. The factory's answer wins; POLICY_CODE_HASH must agree with it when
+ * both are set. Throws when neither is set: without a hash any code could be admitted.
+ */
+export function expectedCodeHash(factoryHash: string | null, configured: string | undefined): string {
+  if (factoryHash !== null && configured !== undefined && factoryHash !== configured) {
+    throw new Error(`POLICY_CODE_HASH (${configured}) is not the factory's policy_code_hash (${factoryHash}). Fix POLICY_CODE_HASH in .env.`);
+  }
+  const hash = factoryHash ?? configured;
+  if (hash === undefined) {
+    throw new Error("The bot service needs POLICY_CODE_HASH (sha256 of the published policy wasm) or FACTORY_CONTRACT_ID in .env: without it any contract code would be admitted.");
+  }
+  return hash;
 }
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -105,8 +130,8 @@ export async function admitVault(io: AdmitIO, policyId: string, expect: AdmitExp
   if (config.agent !== expect.botAccountId) {
     return refuse("AGENT_MISMATCH", `agent is ${config.agent}, not this bot (${expect.botAccountId}); the owner can fix it with set_agent`, config.chainId);
   }
-  if (expect.codeHash !== null && codeHash !== expect.codeHash) {
-    return refuse("CODE_HASH_MISMATCH", `code hash is ${codeHash}, not the factory's policy_code_hash ${expect.codeHash}`, config.chainId);
+  if (codeHash !== expect.codeHash) {
+    return refuse("CODE_HASH_MISMATCH", `code hash is ${codeHash}, not the published policy code hash ${expect.codeHash}`, config.chainId);
   }
   if (config.baseAddress === null) {
     return refuse("NOT_ACTIVATED", "the vault is not activated yet; run activate on it (anyone can, 50 TGas)", config.chainId);

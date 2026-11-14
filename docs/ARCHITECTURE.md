@@ -1,6 +1,6 @@
-# Architecture (v2 + vault factory in progress)
+# Architecture (v2 + factory-less vault creation, not deployed)
 
-Backstop keeps a user's rescue USDC in a **keyless NEAR policy contract** (a vault), watches the user's Aave
+Backstop keeps a user's rescue USDC in a **NEAR policy contract** (a vault) that has no access keys once it is set up, watches the user's Aave
 v3 loan on Base, and when the health factor falls below the trigger, bridges USDC to a Base address
 the policy controls (Chain Signatures) and repays the loan **on behalf of** the user's own address.
 The policy builds and checks every transaction it pays or signs. Security: [SECURITY.md](SECURITY.md). Claims → tests: [JUDGES.md](JUDGES.md).
@@ -17,19 +17,20 @@ flowchart LR
   end
   ANY["Spare USDC on any chain"]
   subgraph NEAR["NEAR mainnet"]
-    FAC["VAULT FACTORY (keyless, immutable; in progress)<br/>creates one vault per user<br/>chain allow-list fixed at init"]
+    ACC["VAULT ACCOUNT bkst-&lt;20 hex&gt;.near<br/>created by your wallet with the bot's shared setup key<br/>(not deployed or run on mainnet yet)"]
     POL["POLICY CONTRACT (Rust, no access keys)<br/>holds your rescue USDC<br/>enforces your limits<br/>verifies 1Click quote signatures<br/>builds the only 2 EVM txs it signs"]
     MPC["v1.signer<br/>Chain Signatures MPC"]
   end
   ONE["NEAR Intents 1Click<br/>NEAR USDC to loan-chain USDC"]
-  AG["BOT ACCOUNT (off-chain worker)<br/>one NEAR account, full-access key in the operator's secret store<br/>agent of every vault: rescue, fund_bridge, approve_pool only"]
+  AG["BOT ACCOUNT (off-chain worker)<br/>one NEAR account, full-access key in the operator's secret store; also holds the shared vault-setup key (one key for every vault)<br/>agent of every vault: rescue, fund_bridge, approve_pool only"]
   subgraph EVM["Loan chain: Base or Arbitrum"]
     DER["Derived address<br/>NO private key exists<br/>USDC to repay + gas ETH"]
     AAVE["Aave v3 Pool"]
     LOAN["Your loan<br/>collateral + USDC debt"]
   end
-  NW -->|"create your vault: deposit returned on close<br/>(signed in your wallet)"| FAC
-  FAC -->|"creates, deploys and initialises the vault<br/>(no access keys)"| POL
+  NW -->|"near.create_account + deposit, returned on close<br/>(one tx, signed in your wallet)"| ACC
+  AG -->|"one tx signed by the deploy key: deploy, new, activate, DeleteKey"| ACC
+  ACC -.->|"becomes"| POL
   NW -->|"deposit, set limits, pause, withdraw<br/>(signed in your wallet)"| POL
   ANY -->|"any-chain deposit"| ONE
   ONE -->|"NEAR USDC lands in your policy"| POL
@@ -134,40 +135,76 @@ flowchart TB
 
 | What | How |
 | --- | --- |
-| Policy contract (vault) | Rust near-sdk 5.30, one per user and loan chain, created with **no access key**, so nobody can bypass its code or upgrade it. Operator-made vaults: one transaction (create account, deploy, init, activate). Factory vaults: the user's one transaction creates, deploys and initialises; `activate` and the USDC storage registration run in the factory's callback as separate receipts |
-| Vault factory | Keyless, immutable contract (in progress, not deployed) that creates a vault for the caller and charges the storage deposit to the caller, returned on `close`. Chain allow-list, fee cap and policy wasm are fixed at `new`; see the next section |
+| Policy contract (vault) | Rust near-sdk 5.30, one per user and loan chain, with **no access key after setup**, so nobody can bypass its code or upgrade it. Operator-made vaults: one transaction (create account, deploy, init, activate, no `AddKey`). Self-serve vaults: see the next section |
+| Vault creation | No factory contract. The user's wallet creates the vault account with `near.create_account`; the bot deploys the policy into it and deletes its own key in one transaction. See the next section |
 | Chain Signatures | The policy calls `v1.signer.sign` with a 32-byte hash (`payload_v2.Ecdsa`, path `backstop-base-1`, domain 0). The signer derives a key from (policy account, path), so the EVM address is controlled by the policy's code alone. `activate` reads the address from `v1.signer.derived_public_key`, and the agent re-derives it two other ways |
-| Owner vs agent | Owner methods need exactly 1 yoctoNEAR, which a function-call key cannot attach. The agent is a NEAR account (the bot account for factory vaults, with a full-access key held in the operator's secret store). Each vault accepts `rescue`, `fund_bridge` and `approve_pool` only from its agent account |
+| Owner vs agent | Owner methods need exactly 1 yoctoNEAR, which a function-call key cannot attach. The agent is a NEAR account (the bot account for self-serve vaults, with a full-access key held in the operator's secret store). Each vault accepts `rescue`, `fund_bridge` and `approve_pool` only from its agent account |
 | NEAR Intents (1Click) | Funds enter from any chain via a deposit address; the policy pays 1Click only for a quote 1Click signed, verified on-chain with `env::ed25519_verify` |
 | NEP-141 / NEP-297 | USDC is the NEAR native USDC token; every state change emits a NEP-297 `EVENT_JSON` log |
 | NEAR AI Cloud | Short human-readable rescue receipt; a template is used if it is down, and it never blocks a rescue |
 
-## Self-serve vaults and the bot account (in progress)
+## Self-serve vaults, factory-less (code written, not deployed)
 
-Users are meant to create their own vault: a keyless **vault factory** creates it from one wallet
-confirmation, the user's deposit (about 2.93 NEAR, computed on chain) is the vault's storage and comes back
-on `close` less about 0.007 NEAR, and the operator pays only the one-time factory deploy (4.86 NEAR
-including gas, computed from the 469 KB factory wasm) and the bot's gas. The factory has a fixed chain allow-list set at `new`,
-no setters, no access keys, and embeds the policy wasm, so every vault runs the factory's `policy_code_hash`.
-Vault names are `<chain>-<n>.<factory>`, with `n` from a counter, so the caller never picks a name and a
-closed vault's name is never reissued. The factory's default agent is one **bot account**: every
-new vault names it as agent, so the bot starts watching the vault without an operator step. The bot
-serves all vaults in one process (discover, check that each vault matches the registry and names the
-bot, watch, act per vault). The bot's key is in the operator's secret store and the account holds about 2
-NEAR. Status: the factory contract and 34 host unit tests are written; the factory deploy script and the
-web create flow are not written; the multi-vault bot service is in progress. None is deployed or run on mainnet.
+There is no factory contract. A vault is a top-level account `bkst-<20 hex>.near`, created in two steps.
+
+1. **The user's wallet signs one small transaction** to the `near` registrar:
+   `create_account({new_account_id, new_public_key})`, where `new_public_key` is the bot's **deploy public
+   key** (`NEXT_PUBLIC_VAULT_DEPLOYER_PK`). It attaches the deposit from `vaultCreateDeposit`
+   (`packages/config/src/vault-plan.ts`): code storage 276,925 B x 1e19 yocto/B = 2.77 NEAR, plus 0.05 NEAR
+   state margin, 0.10 NEAR spare, the USDC storage registration and a 0.02 NEAR gas reserve; about 2.95 NEAR
+   in total (computed from the constants; the exact figure depends on the wasm size and the USDC storage
+   deposit). The site holds no key and signs nothing.
+2. **The bot deploys.** The bot service holds the matching shared setup key (`VAULT_DEPLOYER_PRIVATE_KEY`). In ONE
+   transaction signed by that key on the vault account it runs `DeployContract` (the policy wasm, whose
+   sha256 must equal the pinned `POLICY_CODE_HASH`, `21ade4c3...612ebf`), `new` (owner = the user, agent =
+   the bot), `activate`, and `DeleteKey` of the deploy key. The actions are atomic, and the account ends with
+   no access key. The USDC storage registration is a separate earlier call from the same key.
+
+**The name commits to the arguments.** The name is `bkst-` + the first 20 hex of sha256 over (owner, chain,
+borrower, limits, salt), see `packages/core/src/vault-name.ts`. The site, the API and the bot recompute it
+and refuse a request whose fields do not hash to the account id, so nobody can change the owner, loan
+address or limits after the wallet signed. The salt is random per create.
+
+**Request flow.** The browser posts the fields to `apps/web/app/api/vaults/`, which stores a request
+(`packages/db/src/vault-requests.ts`; statuses pending, deploying, ready, failed, aborted). The bot
+(`apps/agent/src/vault-creator.ts`) re-checks the commitment, the chain, the checksummed loan address, the
+limits, and that the account has no code, exactly the deploy key and at least the creation deposit; it then
+deploys and runs the same admission check as for every vault.
+
+**Failure and refund.** Failed attempts are counted. After 3, if the deploy key is still on the account, the
+bot deletes the account with the owner as beneficiary, so the owner gets the NEAR back. Once the deploy key
+is gone the bot can return nothing, and the request is marked failed.
+
+**Close.** `close` deletes the vault and sends all its NEAR to the owner: the deposit comes back minus the
+deploy gas, estimated at 0.01-0.03 NEAR (not measured).
+
+**Operator cost.** No factory to deploy, so the earlier 4.86 NEAR estimate no longer applies. The bot account
+needs about 2 NEAR for gas (an estimate). Users pay for their own vault storage.
+
+**One bot for every vault.** Each vault names the bot account as its agent. The bot discovers vaults from the
+database (requests marked ready) plus `POLICY_CONTRACT_IDS`, and refuses any vault whose code hash is not
+`POLICY_CODE_HASH`, whose agent is not the bot, or whose config does not match the registry. The agent
+refuses to start without `POLICY_CODE_HASH` (or a factory id, for the old design). It runs the same pass per vault, with one lock per
+vault and one submit queue per NEAR key.
+
+**Status:** written and unit-tested locally. Not deployed, not run on mainnet, not tried with real wallets.
+
+### Windows build
+
+On Windows, `pnpm policy:build:wsl` builds the policy wasm inside WSL Fedora
+(`scripts/wsl-build-policy.sh`), the same steps as `pnpm policy:build`.
 
 ## Status
 
 | Part | Path | State |
 | --- | --- | --- |
 | Policy contract v2 | [`contracts/policy`](../contracts/policy) | Built; 151 unit tests; clippy clean; wasm 277 KB (`--cfg near` + wasm-opt) |
-| Vault factory | [`contracts/factory`](../contracts/factory) | In progress: contract and 34 host unit tests pass; deploy script and web create flow not written; **not deployed**; not run on mainnet |
+| Factory-less vault creation | `packages/core/src/vault-name.ts`, `packages/config/src/vault-plan.ts`, `packages/db/src/vault-requests.ts`, `apps/agent/src/vault-creator.ts`, `apps/web/app/api/vaults/` | Code written and unit-tested locally; **not deployed**; not run on mainnet; wallets not tested. The earlier `contracts/factory` is no longer the plan and was never deployed |
 | Packages | [`packages/*`](../packages) | Built and tested |
 | Agent v2 | [`apps/agent`](../apps/agent) | Built; tested with fakes; not run on mainnet |
-| Multi-vault bot service | [`apps/agent`](../apps/agent) | In progress: one bot account for every vault; not run on mainnet |
+| Multi-vault bot service | [`apps/agent`](../apps/agent) | Code written; one bot account for every vault; not run on mainnet |
 | Web | [`apps/web`](../apps/web) | Landing, `/app`, `/dashboard`, `/docs`, fund-from-any-chain routes; not tested with real wallets |
-| Operator scripts | [`scripts/src`](../scripts/src) | `deploy-policy` (keyless, `--rehearsal`, `--redeploy`, `--finalize`), `policy status/print`, `derive`, `aave-setup status`; factory deploy planned |
+| Operator scripts | [`scripts/src`](../scripts/src) | `deploy-policy` (keyless, `--rehearsal`, `--redeploy`, `--finalize`), `policy status/print`, `derive`, `aave-setup status` |
 | Mainnet rehearsal | — | Pending |
 
 ## The parts
@@ -203,7 +240,7 @@ address match the registry and two independent derivations. Each pass (`rescue.t
 
 A signed repay that could not be broadcast stays resumable (`resumeSignedRepay`, at startup and
 before every watch pass) while its nonce is current. `--dry-run` sends nothing and needs no keys.
-The multi-vault service (in progress) runs the same pass per vault, with one lock per vault and one
+The multi-vault service runs the same pass per vault, with one lock per vault and one
 submit queue per NEAR key.
 
 ### 3. Packages — `packages/*`
@@ -225,8 +262,8 @@ Next.js 16. Landing and `/docs` ship no wallet code. `/app` loads NEAR Connect (
 "Ethereum Wallets") and wagmi (EVM wallets). Steps: connect NEAR → connect EVM → find and verify the
 policy → deposit (from NEAR, or **from another chain** via `/api/fund/quote` + `/api/fund/status`)
 → gas on Base → manage. Every action goes through one review dialog and one wallet prompt. Server
-routes hold no keys except an optional 1Click API key. The create-vault flow (planned) reads the factory
-and refuses unless it has no keys and matches the registry.
+routes hold no keys except an optional 1Click API key. The create-vault flow signs one `near.create_account` in the wallet and posts the fields to `/api/vaults`; the
+server refuses a request whose fields do not hash to the vault name.
 
 ## Repay formula
 

@@ -3,21 +3,20 @@
  * (E.5 "stale state"), validates it, and returns either a refusal with a reason or the exact
  * transaction(s). Nothing here signs or sends.
  */
-import { chainAddressUrl, NEAR } from "@backstop/config/registry";
+import { chainAddressUrl, FEE, loanChainByKey, NEAR } from "@backstop/config/registry";
 import { formatUsdc } from "@backstop/core";
 import { encodeFunctionData, formatEther, formatUnits, getAddress, parseAbi, type Address, type Hex } from "viem";
 import { chainLabel, resolveChain } from "@/lib/chain";
-import { buildCreateLimits, GAS_ALLOWANCE_YOCTO, MAX_VAULTS, nearText, returnedOnClose, type CreateFields } from "@/lib/create-vault";
+import { buildCreateBody, createDeposit, GAS_ALLOWANCE_YOCTO, MAX_VAULTS, nearText, returnedOnClose, type CreateVaultInput } from "@/lib/create-vault";
 import { debtBlockReason } from "@/lib/debt";
-import { factoryMatchesSite, readFactory, readOwnerPolicies, readRefund } from "@/lib/factory-client";
 import { readDebt, readEthBalance, readLoan } from "@/lib/loan-client";
 import { PUBLIC_ENV } from "@/lib/public-env";
 import { viewAccount } from "@/lib/near-rpc";
+import { fetchInviteStatus, fetchOwnerRequests, inviteBlockReason } from "@/lib/vault-requests";
 import {
   activateTx,
-  claimRefundTx,
   closeTx,
-  createPolicyTx,
+  createAccountTx,
   depositUsdcTx,
   failedChecks,
   pauseTx,
@@ -38,7 +37,6 @@ import {
   type PolicySnapshot,
 } from "@/lib/policy-client";
 import { isNearAccountId, parseDecimal, parseEvmAddress, parseLimits, parseUsdc, type LimitsInput } from "@/lib/validate";
-import { loanChainByKey } from "@backstop/config/registry";
 
 export type Row = [label: string, value: string];
 
@@ -46,23 +44,32 @@ type Common = { fingerprint: string; sentence: string; rows: Row[]; dangers: str
 export type PreparedNear = Common & { ok: true; network: "near"; txs: NearTx[] };
 /** An EVM transaction from the connected wallet: ETH to the policy's loan-chain address (step 5) or a deposit to a 1Click address (E.9). */
 export type PreparedEvm = Common & { ok: true; network: "evm"; chainId: number; to: Address; valueWei: bigint; data?: Hex };
-export type Prepared = { ok: false; reason: string } | PreparedNear | PreparedEvm;
+/** A refusal. `nearShort` is set when the problem is too little NEAR in the signer's account: the total needed and what it has. */
+export type Prepared = { ok: false; reason: string; nearShort?: { needYocto: bigint; haveYocto: bigint } } | PreparedNear | PreparedEvm;
 export type ReviewRequest = {
   kind: string;
   prepare: () => Promise<Prepared>;
+  /** Called synchronously right before the wallet is asked (redirect wallets may leave the page after it). */
+  beforeSend?: () => void;
+  /** Called when the user rejected in the wallet (nothing was sent). */
+  onRejected?: () => void;
   /** Called once when the wallet reports the transaction succeeded. */
   onSuccess?: () => void;
+  /** EVM only: called with the transaction hash as soon as the wallet submitted it (before it is mined). */
+  onSubmitted?: (hash: string) => void;
 };
 
 const MIN_NEAR_YOCTO = 10n ** 22n; // 0.01 NEAR: enough for gas of one owner call
 const near = (yocto: bigint) => `${Number(formatUnits(yocto, 24)).toLocaleString("en-US", { maximumFractionDigits: 5 })} NEAR`;
 const refuse = (reason: string): Prepared => ({ ok: false, reason });
+const refuseShortOfNear = (reason: string, needYocto: bigint, haveYocto: bigint): Prepared => ({ ok: false, reason, nearShort: { needYocto, haveYocto } });
 
 type Fresh = { snap: PolicySnapshot; checks: Check[] };
 
-async function fresh(policyId: string): Promise<Fresh> {
+/** `owner`: the connected account, checked as the vault's owner; the Backstop bot is checked as its agent. */
+async function fresh(policyId: string, owner?: string): Promise<Fresh> {
   const snap = await readPolicy(policyId);
-  const checks = verifyPolicy(snap, await readExpectedCodeHash().catch(() => null));
+  const checks = verifyPolicy(snap, await readExpectedCodeHash().catch(() => null), { owner: owner ?? null, agent: PUBLIC_ENV.agentId ?? null });
   return { snap, checks };
 }
 
@@ -108,7 +115,7 @@ export function prepareDeposit(policyId: string, owner: string, amountText: stri
   return (async (): Promise<Prepared> => {
     const amount = parseUsdc(amountText, "The deposit amount");
     if (!amount.ok) return refuse(amount.error);
-    const f = await fresh(policyId);
+    const f = await fresh(policyId, owner);
     const refusal = ownerRefusal(f, owner) ?? fundingRefusal(f);
     if (refusal) return refuse(refusal);
     const [balance, storage, account] = await Promise.all([readUsdcBalance(owner), readUsdcStorage(policyId), viewAccount(owner)]);
@@ -116,7 +123,7 @@ export function prepareDeposit(policyId: string, owner: string, amountText: stri
     const register = storage === null;
     const needNear = MIN_NEAR_YOCTO + (register ? BigInt(NEAR.usdcStorageDeposit) : 0n);
     const have = account?.amount ?? 0n;
-    if (have < needNear) return refuse(`You need about ${near(needNear)} in your NEAR wallet for gas${register ? " and the one-time token registration" : ""}; you have ${near(have)}. Top up your NEAR wallet.`);
+    if (have < needNear) return refuseShortOfNear(`You need about ${near(needNear)} in your NEAR wallet for gas${register ? " and the one-time token registration" : ""}; you have ${near(have)}. Top up your NEAR wallet.`, needNear, have);
     const txs = [depositUsdcTx(policyId, amount.value, register)];
     return {
       ok: true,
@@ -143,7 +150,7 @@ export function prepareWithdraw(policyId: string, owner: string, amountText: str
     const needRegister = ownerStorage === null;
     const have = account?.amount ?? 0n;
     const needNear = MIN_NEAR_YOCTO + (needRegister ? BigInt(NEAR.usdcStorageDeposit) : 0n);
-    if (have < needNear) return refuse(`You need about ${near(needNear)} in your NEAR wallet; you have ${near(have)}. Top up your NEAR wallet.`);
+    if (have < needNear) return refuseShortOfNear(`You need about ${near(needNear)} in your NEAR wallet; you have ${near(have)}. Top up your NEAR wallet.`, needNear, have);
     const txs: NearTx[] = [...(needRegister ? [registerOnUsdcTx(owner)] : []), withdrawTx(policyId, amount.value)];
     return {
       ok: true,
@@ -387,7 +394,7 @@ export function prepareGasTopUp(policyId: string, owner: string, sender: EvmSend
     if (!sender) return refuse("Connect an EVM wallet first. Read-only mode cannot send ETH.");
     const amount = parseDecimal(amountText, 18, "The ETH amount");
     if (!amount.ok) return refuse(amount.error);
-    const f = await fresh(policyId);
+    const f = await fresh(policyId, owner);
     const refusal = ownerRefusal(f, owner) ?? fundingRefusal(f);
     if (refusal) return refuse(refusal);
     const chain = resolveChain(f.snap.config.chain_id);
@@ -488,81 +495,64 @@ export function prepareFundSend(sender: { address: Address; chainId: number | un
   })();
 }
 
-export type CreateVaultInput = { chainKey: string; loanAddress: string; fields: CreateFields };
-
-/** K.6: re-reads the factory, refuses on any mismatch, then shows exactly what `create_policy` will send. */
-export function prepareCreatePolicy(owner: string, input: CreateVaultInput): Promise<Prepared> {
+/**
+ * Factory-less creation, step 1 of 2 (the only step the wallet signs): `near.create_account` makes the vault
+ * account with Backstop's setup key and the refundable deposit. Re-reads the loan, the balance and the owner's
+ * vaults, refuses on any problem, then shows exactly what will be sent. The bot does step 2 (install the vault
+ * contract and delete the setup key, in one transaction).
+ */
+export function prepareCreateVault(owner: string, input: CreateVaultInput): Promise<Prepared> {
   return (async (): Promise<Prepared> => {
-    const factoryId = PUBLIC_ENV.factoryId;
-    if (!factoryId) return refuse("Vault creation opens soon.");
-    let chain;
-    try {
-      chain = loanChainByKey(input.chainKey);
-    } catch {
-      return refuse("Pick Base or Arbitrum for your loan.");
-    }
-    const address = parseEvmAddress(input.loanAddress);
-    if (!address.ok) return refuse(address.error);
-    const limits = buildCreateLimits(input.fields);
-    if (!limits.ok) return refuse(limits.error);
-    const info = await readFactory(factoryId);
-    const verdict = factoryMatchesSite(info);
-    if (!verdict.ok) return refuse(verdict.reason);
-    if (!verdict.chains.some((c) => c.key === chain.key)) return refuse(`Vault creation isn't open on ${chain.name} yet.`);
-    const [debt, account, owned] = await Promise.all([readDebt(chain, address.value), viewAccount(owner), readOwnerPolicies(factoryId, owner)]);
+    const { vaultDeployerPk, policyCodeBytes, policyCodeHash, agentId } = PUBLIC_ENV;
+    const deposit = createDeposit(policyCodeBytes);
+    if (!vaultDeployerPk || !policyCodeHash || !agentId || deposit === null) return refuse("Vault creation opens soon.");
+    // Invite check BEFORE anything reaches the wallet: the create call attaches NEAR, and a server refusal
+    // after signing would strand it. Fails closed when the answer cannot be had.
+    const invite = await fetchInviteStatus(owner).catch((): "error" => "error");
+    const notInvited = inviteBlockReason(owner, invite);
+    if (notInvited) return refuse(notInvited);
+    const built = await buildCreateBody(owner, input);
+    if (!built.ok) return refuse(built.error);
+    const body = built.value;
+    const chain = loanChainByKey(body.chainKey);
+    const [debt, account, requests, taken] = await Promise.all([readDebt(chain, getAddress(body.borrower)), viewAccount(owner), fetchOwnerRequests(owner), viewAccount(body.vaultId)]);
+    if (taken !== null) return refuse("This vault name is already taken. Close this window and press Create again for a new one.");
     const blocked = debtBlockReason(debt.kind, chain.name);
     if (blocked) return refuse(blocked);
-    if (owned.length >= MAX_VAULTS) return refuse(`You've reached the limit of ${MAX_VAULTS} vaults. Close one to open another.`);
+    const open = requests.filter((r) => r.status !== "failed" && r.status !== "aborted");
+    if (open.length >= MAX_VAULTS) return refuse(`You've reached the limit of ${MAX_VAULTS} vaults. Close one to open another.`);
     const have = account?.amount ?? 0n;
-    if (have < info.minDeposit + GAS_ALLOWANCE_YOCTO) {
-      return refuse(`Opening a vault holds about ${nearText(info.minDeposit, 2)}; you have ${nearText(have, 2)}. You get it back when you close the vault.`);
+    if (have < deposit + GAS_ALLOWANCE_YOCTO) {
+      return refuseShortOfNear(`Opening a vault holds about ${nearText(deposit, 2)}; you have ${nearText(have, 2)}. You get it back when you close the vault.`, deposit + GAS_ALLOWANCE_YOCTO, have);
     }
-    const txs = [createPolicyTx(factoryId, chain.key, address.value, limits.value, info.minDeposit)];
-    const l = limits.value;
+    const txs = [createAccountTx(body.vaultId, vaultDeployerPk, deposit)];
+    const l = body.limits;
     return {
       ok: true,
       network: "near",
       txs,
-      fingerprint: `cr|${info.minDeposit}|${info.codeHash}|${debt.kind}|${have >= info.minDeposit + GAS_ALLOWANCE_YOCTO}`,
+      fingerprint: `cv|${body.vaultId}|${deposit}|${debt.kind}|${open.length}`,
       sentence: `Create your Rescue vault on ${chain.name}.`,
       rows: [
         ...nearRows(txs),
+        ["New vault account", body.vaultId],
+        ["Setup key added to it", vaultDeployerPk],
         ["Loan chain", chain.name],
-        [`Loan address on ${chain.name}`, address.value],
+        [`Loan address on ${chain.name}`, body.borrower],
         ["Rescue at health", (l.trigger_hf_bps / 10_000).toFixed(2)],
         ["Most per rescue", `${formatUsdc(BigInt(l.max_per_rescue))} USDC`],
         ["Most per day", `${formatUsdc(BigInt(l.daily_cap))} USDC`],
-        ["Rescue bot", info.config.default_agent],
-        ["Service fee", `${(info.config.fee_bps / 100).toFixed(2)}% of bridged amounts`],
+        ["Rescue bot", agentId],
+        ["Service fee", `at most ${(FEE.maxBps / 100).toFixed(2)}% of bridged amounts (the contract's cap; your vault page shows the exact rate)`],
         ["Vault owner", owner],
-        ["Refundable deposit", `${nearText(info.minDeposit, 3)}, returned on close (about ${nearText(returnedOnClose(info.minDeposit), 3)})`],
+        ["Refundable deposit", `${nearText(deposit, 3)}, returned to you when you close the vault (at least ${nearText(returnedOnClose(deposit), 3)})`],
       ],
       dangers: [],
       notes: [
-        `Refundable deposit: ${nearText(info.minDeposit, 3)}. This keeps your vault on NEAR. You get it back when you close your vault.`,
-        "Your vault has no keys: nobody, Backstop included, can change how it works.",
+        `Refundable deposit: ${nearText(deposit, 3)}. This keeps your vault on NEAR. You get it back when you close your vault.`,
+        "Your wallet creates the vault account with Backstop's setup key. Within about a minute Backstop's bot installs the vault contract and deletes that key in the same transaction; after that your vault has no keys, so nobody, Backstop included, can change how it works.",
+        "If setup fails, the bot deletes the account and your NEAR goes back to your wallet.",
       ],
-    };
-  })();
-}
-
-/** K.6: claim what a failed create could not return at once. */
-export function prepareClaimRefund(owner: string): Promise<Prepared> {
-  return (async (): Promise<Prepared> => {
-    const factoryId = PUBLIC_ENV.factoryId;
-    if (!factoryId) return refuse("Vault creation opens soon.");
-    const amount = await readRefund(factoryId, owner);
-    if (amount === 0n) return refuse("There is no refund waiting for this account.");
-    const txs = [claimRefundTx(factoryId)];
-    return {
-      ok: true,
-      network: "near",
-      txs,
-      fingerprint: `cf|${amount}`,
-      sentence: `Claim ${nearText(amount, 3)} that is waiting for you.`,
-      rows: [...nearRows(txs), ["NEAR goes to", owner], ["Amount", nearText(amount, 3)]],
-      dangers: [],
-      notes: ["This returns the NEAR from a vault that was not created."],
     };
   })();
 }

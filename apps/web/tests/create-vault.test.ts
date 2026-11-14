@@ -1,21 +1,23 @@
 import { readFileSync } from "node:fs";
-import { loanChainByKey, LOAN_CHAINS } from "@backstop/config/registry";
+import { NEAR } from "@backstop/config/registry";
+import { vaultCreateDeposit } from "@backstop/config/vault-plan";
 import { describe, expect, it } from "vitest";
 import { classifyDebt, debtBlockReason } from "@/lib/debt";
-import { buildCreateLimits, createBlockReason, DEFAULT_FIELDS, HIDDEN_LIMITS, returnedOnClose, type CreateInputs } from "@/lib/create-vault";
-import { factoryMatchesSite, type FactoryInfo } from "@/lib/factory-client";
+import { buildCreateBody, buildCreateLimits, createBlockReason, createDeposit, DEFAULT_FIELDS, HIDDEN_LIMITS, NOT_RETURNED_YOCTO, returnedOnClose, type CreateInputs } from "@/lib/create-vault";
 
 const ADDRESS = "0x1111111111111111111111111111111111111111";
-const MIN = 2_926_260_000_000_000_000_000_000n;
+const DEPOSIT = vaultCreateDeposit(277_247);
 const ready: CreateInputs = {
-  factoryReady: true,
-  minDeposit: MIN,
+  creationOpen: true,
+  deposit: DEPOSIT,
   nearBalance: 10n * 10n ** 24n,
   loanAddress: ADDRESS,
   debtKind: "usdc",
   chainName: "Base",
   fields: DEFAULT_FIELDS,
   vaultCount: 0,
+  owner: "alice.near",
+  invite: { allowed: true, inviteOnly: false },
 };
 
 describe("default limits", () => {
@@ -29,7 +31,8 @@ describe("default limits", () => {
     expect(limits.value.target_hf_bps).toBe(num("target_hf_bps"));
     expect(limits.value.max_per_rescue).toBe(str("max_per_rescue"));
     expect(limits.value.daily_cap).toBe(str("daily_cap"));
-    expect(Number(limits.value.cooldown_secs)).toBe(num("cooldown_secs"));
+    // u64 in the contract: a JSON number, never a string
+    expect(limits.value.cooldown_secs).toBe(num("cooldown_secs"));
     expect(limits.value.max_fee_per_gas).toBe(str("max_fee_per_gas"));
     expect(limits.value.max_gas_limit).toBe(str("max_gas_limit"));
     expect(HIDDEN_LIMITS.targetHf).toBe("1.30");
@@ -57,51 +60,47 @@ describe("createBlockReason", () => {
   it("allows a funded owner with a USDC loan", () => {
     expect(createBlockReason(ready)).toBeNull();
   });
-  it("waits for the factory, the debt read and a valid address", () => {
-    expect(createBlockReason({ ...ready, factoryReady: false })).toMatch(/Checking/);
+  it("waits for configuration, the debt read and a valid address", () => {
+    expect(createBlockReason({ ...ready, creationOpen: false })).toBe("Vault creation opens soon.");
+    expect(createBlockReason({ ...ready, deposit: null })).toBe("Vault creation opens soon.");
     expect(createBlockReason({ ...ready, debtKind: null })).toMatch(/Looking for your loan on Base/);
     expect(createBlockReason({ ...ready, loanAddress: "" })).toMatch(/Enter the address/);
     expect(createBlockReason({ ...ready, loanAddress: "0x12" })).toMatch(/0x followed by 40/);
   });
   it("not_enough_near_names_the_deposit_and_that_it_comes_back", () => {
     const r = createBlockReason({ ...ready, nearBalance: 1n * 10n ** 24n });
-    expect(r).toBe("Opening a vault holds about 2.93 NEAR; you have 1 NEAR. You get it back when you close the vault.");
+    expect(r).toBe("Opening a vault holds about 2.94 NEAR; you have 1 NEAR. You get it back when you close the vault.");
+  });
+  it("not_invited_blocks_with_the_invite_message_and_a_failed_check_fails_closed", () => {
+    expect(createBlockReason({ ...ready, invite: { allowed: false, inviteOnly: true } })).toBe("Vault creation is invite-only right now. Ask the Backstop team to add alice.near to the invite list.");
+    expect(createBlockReason({ ...ready, invite: "error" })).toBe("Could not check your invite; try again.");
+    expect(createBlockReason({ ...ready, invite: undefined })).toBe("Checking your invite...");
+    expect(createBlockReason({ ...ready, invite: { allowed: true, inviteOnly: true } })).toBeNull();
   });
   it("stops at eight vaults", () => {
     expect(createBlockReason({ ...ready, vaultCount: 8 })).toBe("You've reached the limit of 8 vaults. Close one to open another.");
   });
-  it("returns the deposit minus what the factory keeps", () => {
-    expect(returnedOnClose(MIN)).toBe(MIN - 6_250_000_000_000_000_000_000n);
+});
+
+describe("deposit", () => {
+  it("is_the_shared_budget_for_the_configured_wasm_size", () => {
+    expect(createDeposit(undefined)).toBeNull();
+    expect(createDeposit(277_247)).toBe(DEPOSIT);
+  });
+  it("returns_all_but_the_usdc_registration_and_at_most_the_deploy_gas", () => {
+    expect(NOT_RETURNED_YOCTO).toBe(BigInt(NEAR.usdcStorageDeposit) + 20n * 10n ** 21n);
+    expect(returnedOnClose(DEPOSIT)).toBe(DEPOSIT - NOT_RETURNED_YOCTO);
   });
 });
 
-describe("factoryMatchesSite", () => {
-  const base = loanChainByKey("base");
-  const config = (over: Partial<FactoryInfo["config"]["chains"][number]> = {}): FactoryInfo["config"] => ({
-    chains: LOAN_CHAINS.map((c) => ({ key: c.key, chain_id: c.chainId, aave_pool: c.aave.pool, usdc: c.aave.usdc, bridge_dest_asset: c.usdcAssetId, ...(c.key === "base" ? over : {}) })),
-    usdc_near: "u",
-    bridge_signer_pk: "k",
-    mpc_contract: "v1.signer",
-    derivation_path: "p",
-    default_agent: "bot.near",
-    fee_account: "fee.near",
-    fee_bps: 10,
-  });
-  it("accepts a factory that matches the registry, Base first", () => {
-    const v = factoryMatchesSite({ config: config(), keyCount: 0 });
-    expect(v.ok && v.chains[0]!.key).toBe("base");
-  });
-  it("refuses a factory with access keys", () => {
-    expect(factoryMatchesSite({ config: config(), keyCount: 1 }).ok).toBe(false);
-  });
-  it("refuses a factory whose pool, usdc or bridge asset differs (case-insensitive for addresses)", () => {
-    expect(factoryMatchesSite({ config: config({ aave_pool: base.aave.pool.toLowerCase() }), keyCount: 0 }).ok).toBe(true);
-    expect(factoryMatchesSite({ config: config({ aave_pool: "0x0000000000000000000000000000000000000001" }), keyCount: 0 }).ok).toBe(false);
-    expect(factoryMatchesSite({ config: config({ usdc: "0x0000000000000000000000000000000000000001" }), keyCount: 0 }).ok).toBe(false);
-    expect(factoryMatchesSite({ config: config({ bridge_dest_asset: "nep141:x" }), keyCount: 0 }).ok).toBe(false);
-    expect(factoryMatchesSite({ config: config({ chain_id: 1 }), keyCount: 0 }).ok).toBe(false);
-  });
-  it("refuses a fee above the cap", () => {
-    expect(factoryMatchesSite({ config: { ...config(), fee_bps: 51 }, keyCount: 0 }).ok).toBe(false);
+describe("buildCreateBody", () => {
+  it("checksums_the_borrower_and_names_the_vault_from_its_fields", async () => {
+    const r = await buildCreateBody("alice.near", { chainKey: "base", loanAddress: "0x000000000000000000000000000000000000beef", fields: DEFAULT_FIELDS, salt: "00112233445566778899aabbccddeeff" });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.value.borrower).toBe("0x000000000000000000000000000000000000bEEF");
+    expect(r.value.vaultId).toMatch(/^bkst-[0-9a-f]{20}\.near$/);
+    const again = await buildCreateBody("alice.near", { chainKey: "base", loanAddress: "0x000000000000000000000000000000000000beef", fields: DEFAULT_FIELDS, salt: "00112233445566778899aabbccddeeff" });
+    expect(again.ok && again.value.vaultId).toBe(r.value.vaultId);
+    expect((await buildCreateBody("alice.near", { chainKey: "solana", loanAddress: ADDRESS, fields: DEFAULT_FIELDS, salt: "00112233445566778899aabbccddeeff" })).ok).toBe(false);
   });
 });

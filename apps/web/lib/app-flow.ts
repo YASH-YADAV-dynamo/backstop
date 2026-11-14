@@ -50,8 +50,7 @@ export const KIND_LABEL: Record<string, string> = {
   activate: "Set up rescue wallet",
   gas_topup: "Gas money",
   fund_from_chain: "Deposit from another chain",
-  create_policy: "Create vault",
-  claim_refund: "Claim refund",
+  create_vault: "Create vault",
 };
 
 export const kindLabel = (kind: string, method: string): string => KIND_LABEL[kind] ?? method;

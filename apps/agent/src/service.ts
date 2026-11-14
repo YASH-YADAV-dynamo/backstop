@@ -38,8 +38,10 @@ export type TaskKind = "rescue" | "approve" | "resume";
 export interface ServiceIO {
   now(): Date;
   log(line: string): void;
-  /** Vault ids from the factory + POLICY_CONTRACT_IDS. */
+  /** Vault ids from ready creation requests, the factory and POLICY_CONTRACT_IDS. */
   discover(): Promise<string[]>;
+  /** Works through open vault creation requests (vault-creator.ts); resolves with how many became ready. Runs in the background, one run at a time. */
+  createVaults?(): Promise<number>;
   admit(policyId: string): Promise<Admission>;
   /** Fresh limits + vault USDC on NEAR. */
   readNear(policyId: string): Promise<{ limits: Limits; usdcVault: bigint }>;
@@ -132,6 +134,8 @@ export class VaultService {
   private readonly chainFailures = new Map<number, number>();
   private lastDiscover = Number.NEGATIVE_INFINITY;
   private passes = 0;
+  /** The running vault creation run, if any: a slow deploy never delays status rows or rescues. */
+  private creating = false;
   readonly opts: ServiceOptions;
 
   constructor(
@@ -150,6 +154,7 @@ export class VaultService {
   async pass(): Promise<VaultStatus[]> {
     this.passes += 1;
     const now = this.io.now().getTime();
+    this.startCreating();
     await this.discover(now);
     await this.admitDue(now);
     const rows: VaultStatus[] = [];
@@ -255,6 +260,25 @@ export class VaultService {
       outcome: t.outcome,
       checkedAt,
     });
+  }
+
+  /** Starts one background run of vault creation unless dry-running, not configured, or one is still running. */
+  private startCreating(): void {
+    const create = this.io.createVaults;
+    if (this.opts.dryRun || !create || this.creating) return;
+    this.creating = true;
+    const task = create
+      .call(this.io)
+      .then((ready) => {
+        // A vault that just became ready is picked up by the next pass's discovery, not up to 60 s later.
+        if (ready > 0) this.lastDiscover = Number.NEGATIVE_INFINITY;
+      })
+      .catch((err: unknown) => this.io.log(`Vault creation run failed: ${errText(err)}`))
+      .finally(() => {
+        this.creating = false;
+      });
+    this.running.add(task);
+    void task.finally(() => this.running.delete(task));
   }
 
   private async discover(now: number): Promise<void> {

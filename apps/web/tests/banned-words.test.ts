@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /** v3 section 2: none of these may be on screen in the app. Only text a person can see is scanned (JSX text and visible string literals). */
@@ -23,7 +24,7 @@ export function visibleText(raw: string): string[] {
 }
 
 describe("no_banned_word_in_components_app", () => {
-  const root = new URL("../components/app", import.meta.url).pathname;
+  const root = fileURLToPath(new URL("../components/app", import.meta.url));
   it("keeps internals and hackathon wording off the app screens", () => {
     const hits: string[] = [];
     for (const file of files(root)) {

@@ -42,7 +42,7 @@ export function ConnectWalletButton({ variant = "default" }: { variant?: "defaul
   return (
     <>
       <Button variant={variant} onClick={() => setOpen(true)} disabled={connecting}>
-        {connecting ? "Connecting..." : "Connect a wallet"}
+        {connecting ? "Waiting for wallet..." : "Connect a wallet"}
       </Button>
       <EvmConnectDialog open={open} onOpenChange={setOpen} />
     </>

@@ -4,15 +4,30 @@
  * through one NEAR submit queue; each vault's repay is signed by its own rescue wallet, so EVM
  * nonces never collide across vaults, and the per-vault lock covers approve then repay.
  */
-import { baseDecode } from "near-api-js";
+import { readFile } from "node:fs/promises";
+import { baseDecode, teraToGas } from "near-api-js";
 import { erc20Abi, getAddress, toHex, type Address, type PublicClient } from "viem";
-import { NEAR, loanChainById, rpcList, type Env, type LoanChain } from "@backstop/config";
-import { assertChainId, evmClient, feeEstimate, ftBalance, l1DataFee, nearProvider, viewAccessKeys, viewCall } from "@backstop/chains";
-import type { RescueStore, VaultStatusStore } from "@backstop/db";
+import { NEAR, POLICY, loanChainById, rpcList, type Env, type LoanChain } from "@backstop/config";
+import {
+  assertChainId,
+  evmClient,
+  feeEstimate,
+  ftBalance,
+  functionCall,
+  l1DataFee,
+  nearAccount,
+  nearProvider,
+  rpcErrorMessage,
+  sendTransaction,
+  viewAccessKeys,
+  viewCall,
+} from "@backstop/chains";
+import type { RescueStore, VaultRequestStore, VaultStatusStore } from "@backstop/db";
 import { encodeRepay, poolAbi } from "@backstop/lending-aave";
 import { deriveAddressOnChain, deriveEvmAddress } from "@backstop/signer";
 import { liveDeps } from "./deps.js";
-import { admitVault, discoverVaults, readFactory, type AdmitIO, type ViewFn } from "./discover.js";
+import { admitVault, discoverVaults, expectedCodeHash, readFactory, type AdmitIO, type ViewFn } from "./discover.js";
+import { creatorConfig, processVaultRequests, type CreatorAccount, type CreatorIO } from "./vault-creator.js";
 import { NearSubmitQueue, nearKeyClient } from "./near-queue.js";
 import { readPolicy } from "./policy.js";
 import { IN_PROGRESS, resumeSignedRepay, runOnce, type AgentDeps, type RunOptions } from "./rescue.js";
@@ -87,12 +102,20 @@ export interface LiveServiceSetup {
   io: ServiceIO;
   /** The factory's default_agent, to warn when it is not this bot. */
   factoryDefaultAgent: string | null;
+  /** The published policy code hash every vault must have. */
+  codeHash: string;
+  /** The public key users add to new vault accounts; null when vault creation is off. */
+  deployerPublicKey: string | null;
 }
+
+/** NEAR's code_hash of an account without a contract (32 zero bytes, base58). */
+const NO_CODE_HASH = "11111111111111111111111111111111";
 
 export async function liveServiceIO(
   env: Env & { AGENT_ACCOUNT_ID: string },
   store: RescueStore,
   statusStore: VaultStatusStore,
+  requestStore: VaultRequestStore,
   log: (line: string) => void,
   run: RunOptions,
 ): Promise<LiveServiceSetup> {
@@ -101,13 +124,16 @@ export async function liveServiceIO(
   const view: ViewFn = (id, method, args) => viewCall<unknown>(provider, id, method, args ?? {});
   const bot = env.AGENT_ACCOUNT_ID;
 
-  let codeHash: string | null = null;
+  let factoryHash: string | null = null;
   let factoryDefaultAgent: string | null = null;
   if (env.FACTORY_CONTRACT_ID) {
     const f = await readFactory(view, env.FACTORY_CONTRACT_ID);
-    codeHash = f.codeHash;
+    factoryHash = f.codeHash;
     factoryDefaultAgent = f.defaultAgent;
   }
+  // Refuses to start without a published code hash: admission would otherwise accept any code.
+  const codeHash = expectedCodeHash(factoryHash, env.POLICY_CODE_HASH);
+  const creator = await creatorConfig(env, codeHash, bot, async (path) => new Uint8Array(await readFile(path)));
   const policyIds = [...(env.POLICY_CONTRACT_IDS ?? []), ...(env.POLICY_CONTRACT_ID ? [env.POLICY_CONTRACT_ID] : [])];
 
   // One client per loan chain, chain id checked once before first use.
@@ -161,11 +187,54 @@ export async function liveServiceIO(
     return d;
   };
 
+  const admit = (id: string) => admitVault(admitIO, id, { botAccountId: bot, codeHash });
+
+  // Vault creation: transactions signed by the deploy key on the vault account itself.
+  const deployKey = env.VAULT_DEPLOYER_PRIVATE_KEY;
+  const asVault = (vaultId: string) => {
+    if (!deployKey) throw new Error("Vault creation is off: VAULT_DEPLOYER_PRIVATE_KEY is not set.");
+    return nearAccount(vaultId, deployKey, nearUrls);
+  };
+  const creatorIO: CreatorIO = {
+    now: () => new Date(),
+    log,
+    store: requestStore,
+    account: async (id): Promise<CreatorAccount | null> => {
+      let raw;
+      try {
+        raw = await provider.viewAccount({ accountId: id });
+      } catch (err) {
+        if (/does not exist|UNKNOWN_ACCOUNT/i.test(rpcErrorMessage(err))) return null;
+        throw new Error(`Could not read ${id}: ${rpcErrorMessage(err)}`);
+      }
+      const code = String(raw.code_hash);
+      return { balance: BigInt(raw.amount), codeHashHex: code === NO_CODE_HASH ? null : codeHashToHex(code), keys: await viewAccessKeys(provider, id) };
+    },
+    usdcRegistered: async (id) => (await viewCall<unknown>(provider, NEAR.usdcToken, "storage_balance_of", { account_id: id })) !== null,
+    registerUsdc: async (id) =>
+      (
+        await functionCall(asVault(id), {
+          contractId: NEAR.usdcToken,
+          methodName: "storage_deposit",
+          args: { account_id: id, registration_only: true },
+          gas: teraToGas(30),
+          deposit: BigInt(NEAR.usdcStorageDeposit),
+        })
+      ).txHash,
+    sendAsVault: async (id, txActions) => (await sendTransaction(asVault(id), id, txActions)).txHash,
+    activate: async (id) => {
+      await nearQueue().call({ receiverId: id, methodName: "activate", args: {}, tgas: POLICY.gas.activate });
+    },
+    admit,
+  };
+
   const io: ServiceIO = {
     now: () => new Date(),
     log,
-    discover: () => discoverVaults(view, { factoryId: env.FACTORY_CONTRACT_ID, policyIds }),
-    admit: (id) => admitVault(admitIO, id, { botAccountId: bot, codeHash }),
+    discover: () =>
+      discoverVaults(view, { factoryId: env.FACTORY_CONTRACT_ID, policyIds, created: async () => (await requestStore.listReady()).map((r) => r.vaultId) }),
+    ...(creator !== null && { createVaults: () => processVaultRequests(creatorIO, creator) }),
+    admit,
     readNear: async (id) => {
       const [{ limits }, usdcVault] = await Promise.all([readPolicy(provider, id), ftBalance(provider, NEAR.usdcToken, id)]);
       return { limits, usdcVault };
@@ -210,5 +279,5 @@ export async function liveServiceIO(
       },
     }),
   };
-  return { io, factoryDefaultAgent };
+  return { io, factoryDefaultAgent, codeHash, deployerPublicKey: creator?.deployerPublicKey ?? null };
 }

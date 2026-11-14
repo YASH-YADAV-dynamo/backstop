@@ -55,3 +55,24 @@ export const vaultStatus = pgTable("vault_status", {
 });
 
 export type VaultStatusRow = typeof vaultStatus.$inferSelect;
+
+/**
+ * Factory-less vault creation requests, one per vault account (design: server-signed creation). The
+ * web inserts a row after the user's wallet created the account; the bot deploys the policy into it
+ * and moves the row to ready, failed or aborted. `limits_json` is the contract's `Limits` JSON.
+ */
+export const vaultRequests = pgTable("vault_requests", {
+  vaultId: text("vault_id").primaryKey(),
+  owner: text("owner").notNull(),
+  chainKey: text("chain_key").notNull(),
+  borrower: text("borrower").notNull(),
+  limitsJson: text("limits_json").notNull(),
+  salt: text("salt").notNull(),
+  status: text("status", { enum: ["pending", "deploying", "ready", "failed", "aborted"] }).notNull(),
+  attempts: integer("attempts").notNull(),
+  lastError: text("last_error"),
+  createdAt: ts("created_at").notNull(),
+  updatedAt: ts("updated_at").notNull(),
+});
+
+export type VaultRequestRow = typeof vaultRequests.$inferSelect;

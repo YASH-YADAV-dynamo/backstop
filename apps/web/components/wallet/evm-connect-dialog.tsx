@@ -2,12 +2,13 @@
 
 import { ExternalLink, Loader2 } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConnect, useConnectors } from "wagmi";
 import { metamaskDeepLink } from "@/components/app/environment";
 import { Button } from "@/components/ui/button";
 import { useBrowserEnv, useHasBareProvider } from "@/lib/use-client";
-import { isRequestPending, isUserRejection, errorText } from "@/lib/wallet-errors";
+import { walletErrorMessage } from "@/lib/wallet-errors";
+import { createInFlightGuard, evmWalletChoices, WALLET_STALL_MS } from "@/lib/wallet-flow";
 
 const INSTALL_LINKS = [
   { name: "MetaMask", href: "https://metamask.io" },
@@ -15,19 +16,20 @@ const INSTALL_LINKS = [
   { name: "Coinbase Wallet", href: "https://www.coinbase.com/wallet" },
 ] as const;
 
-const UNLOCK_HINT_MS = 30_000;
-
 export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const connectors = useConnectors();
   const { mutate: connect, reset, isPending, variables } = useConnect();
   const [message, setMessage] = useState<string | null>(null);
+  /** The wallet to offer "Try again" for after an open-request error. */
+  const [retryWith, setRetryWith] = useState<(typeof connectors)[number] | null>(null);
   const [slow, setSlow] = useState(false);
+  const guard = useRef(createInFlightGuard());
   const env = useBrowserEnv();
   const hasBareProvider = useHasBareProvider();
 
   useEffect(() => {
     if (!isPending) return;
-    const t = setTimeout(() => setSlow(true), UNLOCK_HINT_MS);
+    const t = setTimeout(() => setSlow(true), WALLET_STALL_MS);
     return () => {
       clearTimeout(t);
       setSlow(false);
@@ -35,30 +37,39 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
   }, [isPending]);
 
   // Row 9: list each EIP-6963 wallet by its announced name and icon; the bare `window.ethereum`
-  // connector is only offered when no wallet announced itself.
-  const list = useMemo(() => {
-    const announced = connectors.filter((c) => c.type === "injected" && c.id !== "injected");
-    const generic = connectors.filter((c) => c.id === "injected");
-    const others = connectors.filter((c) => c.type !== "injected");
-    return [...announced, ...(announced.length === 0 && hasBareProvider ? generic : []), ...others];
-  }, [connectors, hasBareProvider]);
+  // connector is only offered when no wallet announced itself (it belongs to whichever extension won the race).
+  const list = useMemo(() => evmWalletChoices(connectors, hasBareProvider), [connectors, hasBareProvider]);
 
   const noWallet = list.length === 0;
 
   function pick(connector: (typeof connectors)[number]) {
+    const token = guard.current.begin();
+    if (token === null) return; // a double click must not open a second wallet request
     setMessage(null);
+    setRetryWith(null);
     // Called synchronously from the click handler (popup blockers).
     connect(
       { connector },
       {
-        onSuccess: () => onOpenChange(false),
+        onSuccess: () => {
+          if (!guard.current.end(token)) return;
+          onOpenChange(false);
+        },
         onError: (err) => {
-          if (isUserRejection(err)) setMessage("Cancelled in wallet. Pick a wallet to try again.");
-          else if (isRequestPending(err)) setMessage("Your wallet already has a request open. Open it and approve or reject, then try again.");
-          else setMessage(`Could not connect: ${errorText(err)}`);
+          if (!guard.current.end(token)) return; // the user stopped waiting: this answer is stale
+          const { kind, message: text } = walletErrorMessage(err, "Could not connect");
+          if (kind === "rejected") setMessage("Cancelled in wallet. Pick a wallet to try again.");
+          else setMessage(text);
+          if (kind === "pending") setRetryWith(connector);
         },
       },
     );
+  }
+
+  function stopWaiting() {
+    guard.current.reset();
+    reset();
+    setMessage("Stopped waiting. If your wallet still shows a connection request, finish or reject it there, then pick a wallet again.");
   }
 
   return (
@@ -66,8 +77,10 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
       open={open}
       onOpenChange={(next) => {
         if (!next) {
+          guard.current.reset();
           reset();
           setMessage(null);
+          setRetryWith(null);
         }
         onOpenChange(next);
       }}
@@ -139,16 +152,21 @@ export function EvmConnectDialog({ open, onOpenChange }: { open: boolean; onOpen
 
           {slow && isPending ? (
             <p role="status" className="mt-3 text-sm text-warn">
-              Still waiting. Unlock your wallet, then try again.{" "}
-              <button type="button" className="underline" onClick={() => reset()}>
-                Cancel
+              Still waiting for your wallet. Unlock it and look for the request.{" "}
+              <button type="button" className="underline" onClick={stopWaiting}>
+                Stop waiting
               </button>
             </p>
           ) : null}
           {message ? (
-            <p role="alert" className="mt-3 text-sm text-muted-foreground">
-              {message}
-            </p>
+            <div role="alert" className="mt-3 space-y-2 text-sm text-muted-foreground">
+              <p>{message}</p>
+              {retryWith && !isPending ? (
+                <Button size="sm" variant="outline" onClick={() => pick(retryWith)}>
+                  Try again
+                </Button>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="mt-5 flex justify-end">

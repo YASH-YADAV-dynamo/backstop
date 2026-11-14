@@ -34,7 +34,7 @@ const envelope = z.object({
 });
 
 /** JSON-RPC errors that describe the request, not the endpoint: another endpoint would say the same. */
-const DEFINITIVE = new Set(["UNKNOWN_ACCOUNT", "UNKNOWN_TRANSACTION", "INVALID_TRANSACTION", "UNKNOWN_BLOCK", "NO_SYNCED_BLOCKS", "TIMEOUT_ERROR"]);
+const DEFINITIVE = new Set(["UNKNOWN_ACCOUNT", "UNKNOWN_ACCESS_KEY", "UNKNOWN_TRANSACTION", "INVALID_TRANSACTION", "UNKNOWN_BLOCK", "NO_SYNCED_BLOCKS", "TIMEOUT_ERROR"]);
 
 async function post(url: string, body: unknown): Promise<z.infer<typeof envelope>> {
   const ctrl = new AbortController();
@@ -148,6 +148,47 @@ export async function accessKeyCount(accountId: string): Promise<number> {
   const raw = accessKeysSchema.parse(await nearRpc("query", { request_type: "view_access_key_list", finality: "final", account_id: accountId }));
   if ("error" in raw) throw new NearRpcError(raw.error, "rejected");
   return raw.keys.length;
+}
+
+const keyListSchema = z.union([
+  z.object({ keys: z.array(z.object({ public_key: z.string(), access_key: z.object({ permission: z.unknown() }).passthrough() }).passthrough()) }),
+  z.object({ error: z.string() }).passthrough(),
+]);
+
+export type AccessKeyInfo = { publicKey: string; fullAccess: boolean };
+
+/** Every access key on the account, or `null` when the account does not exist. */
+export async function accessKeys(accountId: string): Promise<AccessKeyInfo[] | null> {
+  let raw;
+  try {
+    raw = keyListSchema.parse(await nearRpc("query", { request_type: "view_access_key_list", finality: "final", account_id: accountId }));
+  } catch (err) {
+    if (err instanceof NearRpcError && err.message.startsWith("UNKNOWN_ACCOUNT")) return null;
+    throw err;
+  }
+  if ("error" in raw) {
+    if (/does not exist/i.test(raw.error)) return null;
+    throw new NearRpcError(raw.error, "rejected");
+  }
+  return raw.keys.map((k) => ({ publicKey: k.public_key, fullAccess: k.access_key.permission === "FullAccess" }));
+}
+
+const accessKeySchema = z.union([z.object({ error: z.string() }).passthrough(), z.object({ nonce: z.number(), permission: z.unknown() })]);
+
+/** `view_access_key`: true when `publicKey` is a full-access key of `accountId`; false when the key or the account is missing. */
+export async function hasFullAccessKey(accountId: string, publicKey: string): Promise<boolean> {
+  let raw;
+  try {
+    raw = accessKeySchema.parse(await nearRpc("query", { request_type: "view_access_key", finality: "final", account_id: accountId, public_key: publicKey }));
+  } catch (err) {
+    if (err instanceof NearRpcError && /UNKNOWN_ACCOUNT|UNKNOWN_ACCESS_KEY|does not exist/i.test(err.message)) return false;
+    throw err;
+  }
+  if ("error" in raw) {
+    if (/does not exist/i.test(raw.error)) return false;
+    throw new NearRpcError(raw.error, "rejected");
+  }
+  return raw.permission === "FullAccess";
 }
 
 const txStatusSchema = z

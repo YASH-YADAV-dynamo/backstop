@@ -1,4 +1,5 @@
 /** Input validation and small encoders shared by the wallet UI. Pure; safe in client and server code. */
+import type { LimitsJson } from "@backstop/core";
 import { getAddress, isAddress, parseUnits, type Address } from "viem";
 
 /** NEAR account id rules (nomicon): 2-64 chars, lowercase parts separated by `.`, `-` or `_`. */
@@ -65,15 +66,8 @@ export type LimitsInput = {
   maxGasLimit: string;
 };
 
-export type LimitsJson = {
-  trigger_hf_bps: number;
-  target_hf_bps: number;
-  max_per_rescue: string;
-  daily_cap: string;
-  cooldown_secs: string;
-  max_fee_per_gas: string;
-  max_gas_limit: string;
-};
+/** The contract's `Limits` JSON (u64 `cooldown_secs` is a JSON number; U128 values are strings). */
+export type { LimitsJson };
 
 /** Mirrors `Limits::validate` in the contract, plus "trigger must be above 1.00" (below that is liquidation). */
 export function parseLimits(input: LimitsInput): Parsed<LimitsJson> {
@@ -90,6 +84,7 @@ export function parseLimits(input: LimitsInput): Parsed<LimitsJson> {
   if (max.value > cap.value) return { ok: false, error: "Max per rescue cannot be above the daily cap." };
   const cooldown = parseDecimal(input.cooldownSecs, 0, "Cooldown (seconds)");
   if (!cooldown.ok) return cooldown;
+  if (cooldown.value > BigInt(Number.MAX_SAFE_INTEGER)) return { ok: false, error: "Cooldown (seconds) is unrealistically long." };
   const fee = parseDecimal(input.maxFeeGwei, 9, "Max fee (gwei)");
   if (!fee.ok) return fee;
   const gas = parseDecimal(input.maxGasLimit, 0, "Max gas limit");
@@ -101,7 +96,7 @@ export function parseLimits(input: LimitsInput): Parsed<LimitsJson> {
       target_hf_bps: target.value,
       max_per_rescue: max.value.toString(),
       daily_cap: cap.value.toString(),
-      cooldown_secs: cooldown.value.toString(),
+      cooldown_secs: Number(cooldown.value),
       max_fee_per_gas: fee.value.toString(),
       max_gas_limit: gas.value.toString(),
     },

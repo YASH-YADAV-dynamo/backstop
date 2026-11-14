@@ -19,7 +19,7 @@ import { chainName, EVM_CHAINS, type OriginToken } from "@/lib/fund/shared";
 import { prepareFundSend } from "@/lib/review";
 import { useLocalString } from "@/lib/use-client";
 import { parseDecimal } from "@/lib/validate";
-import { errorText, isUserRejection } from "@/lib/wallet-errors";
+import { errorText, walletErrorMessage } from "@/lib/wallet-errors";
 
 const stamp = () => Date.now();
 const field = "h-10 w-full rounded-md border bg-background px-3 text-sm";
@@ -177,7 +177,7 @@ function Instructions({ saved, onReset }: { saved: SavedFund; onReset: () => voi
                 disabled={switching}
                 onClick={() => {
                   setSwitchError(null);
-                  switchChain({ chainId: evmChainId as 1 }, { onError: (e) => setSwitchError(isUserRejection(e) ? "Cancelled in wallet." : `Your wallet would not switch: ${errorText(e)}`) });
+                  switchChain({ chainId: evmChainId as 1 }, { onError: (e) => setSwitchError(walletErrorMessage(e, "Your wallet would not switch", "the switch button again").message) });
                 }}
               >
                 {switching ? "Check your wallet..." : `Switch to ${chainName(saved.chain)} to send`}

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { NearRpcError, viewAccount, viewFunction } from "@/lib/near-rpc";
 import { resolveChain } from "@/lib/chain";
 import { readDebt, readLoan } from "@/lib/loan-client";
-import { factoryMatchesSite, readFactory, readOwnerPolicies, readRefund } from "@/lib/factory-client";
+import { fetchInviteStatus, fetchOwnerRequests, type RequestView } from "@/lib/vault-requests";
 import { vaultStatusResponseSchema, type VaultStatusResponse } from "@/lib/vault-status";
 import { PUBLIC_ENV } from "@/lib/public-env";
 import { configSchema, readExpectedCodeHash, readPolicy, readUsdcStorage, readUsdcBalance, verifyPolicy } from "@/lib/policy-client";
@@ -16,14 +16,15 @@ import { configSchema, readExpectedCodeHash, readPolicy, readUsdcStorage, readUs
 const POLL_MS = 30_000;
 const backoff = (failures: number) => POLL_MS * 2 ** Math.min(failures, 2);
 
-export function usePolicy(policyId: string | null) {
+/** The vault and its checks; `owner` (the connected account) is checked as the vault's owner, the Backstop bot as its agent. */
+export function usePolicy(policyId: string | null, owner: string | null) {
   return useQuery({
-    queryKey: ["policy", policyId],
+    queryKey: ["policy", policyId, owner],
     enabled: policyId !== null,
     queryFn: async () => {
       const snap = await readPolicy(policyId!);
       const expected = await readExpectedCodeHash().catch(() => null);
-      return { snap, checks: verifyPolicy(snap, expected) };
+      return { snap, checks: verifyPolicy(snap, expected, { owner, agent: PUBLIC_ENV.agentId ?? null }) };
     },
     refetchInterval: (q) => backoff(q.state.fetchFailureCount),
     // "does not exist" / wrong-shape answers are definitive: do not hammer the RPC.
@@ -31,18 +32,20 @@ export function usePolicy(policyId: string | null) {
   });
 }
 
-export function useFactoryPolicies(owner: string | null) {
-  const factory = PUBLIC_ENV.factoryId;
-  return useQuery({
-    queryKey: ["factory-policies", factory, owner],
-    enabled: Boolean(factory && owner),
-    // Closed vaults stay in the factory's index: only accounts that still exist are listed.
+/**
+ * The owner's vault creation requests (GET /api/vaults?owner=). Polls every 4 s while one is still being set
+ * up, else every 30 s. Closed vaults are dropped: a ready request whose account no longer exists is not listed.
+ */
+export function useVaultRequests(owner: string | null) {
+  return useQuery<RequestView[]>({
+    queryKey: ["vault-requests", owner],
+    enabled: owner !== null,
     queryFn: async () => {
-      const ids = await readOwnerPolicies(factory!, owner!);
-      const alive = await Promise.all(ids.map((id) => viewAccount(id).then((a) => a !== null)));
-      return ids.filter((_, i) => alive[i]);
+      const all = await fetchOwnerRequests(owner!);
+      const alive = await Promise.all(all.map((r) => (r.status === "ready" ? viewAccount(r.vaultId).then((a) => a !== null) : Promise.resolve(true))));
+      return all.filter((_, i) => alive[i]);
     },
-    refetchInterval: (q) => backoff(q.state.fetchFailureCount),
+    refetchInterval: (q) => (q.state.data?.some((r) => r.status === "pending" || r.status === "deploying") ? 4_000 : backoff(q.state.fetchFailureCount)),
   });
 }
 
@@ -89,29 +92,14 @@ export function useNearAccount(accountId: string | null) {
   });
 }
 
-/** The factory and its checks against this site (K.6). Disabled when no factory is configured. */
-export function useFactory() {
-  const factoryId = PUBLIC_ENV.factoryId;
+/** Whether the server's invite list lets `owner` create a vault. A failure surfaces as isError (callers fail closed). */
+export function useInvite(owner: string | null) {
   return useQuery({
-    queryKey: ["factory", factoryId],
-    enabled: factoryId !== undefined,
-    staleTime: 60_000,
+    queryKey: ["invite", owner],
+    enabled: owner !== null,
+    staleTime: 30_000,
     retry: 1,
-    queryFn: async () => {
-      const info = await readFactory(factoryId!);
-      return { info, verdict: factoryMatchesSite(info) };
-    },
-  });
-}
-
-/** NEAR the factory holds for `owner` after a create that could not refund at once (0n = none). */
-export function useRefund(owner: string | null) {
-  const factoryId = PUBLIC_ENV.factoryId;
-  return useQuery({
-    queryKey: ["factory-refund", factoryId, owner],
-    enabled: factoryId !== undefined && owner !== null,
-    queryFn: () => readRefund(factoryId!, owner!),
-    refetchInterval: (q) => backoff(q.state.fetchFailureCount),
+    queryFn: () => fetchInviteStatus(owner!),
   });
 }
 

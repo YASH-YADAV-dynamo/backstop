@@ -24,6 +24,19 @@ describe("policy verification is per chain", () => {
     expect(check.state).toBe("fail");
     expect(check.detail).toContain("Aave pool is the official Arbitrum One pool");
   });
+  it("owner_check_fails_when_the_connected_account_is_not_the_vault_owner", () => {
+    const snap = snapshotFor(baseChain);
+    expect(verifyPolicy(snap, null, { owner: "alice.near" }).find((c) => c.id === "owner")!.state).toBe("pass");
+    const other = verifyPolicy(snap, null, { owner: "mallory.near" }).find((c) => c.id === "owner")!;
+    expect(other.state).toBe("fail");
+    expect(other.detail).toContain("alice.near");
+    expect(verifyPolicy(snap, null).some((c) => c.id === "owner")).toBe(false);
+  });
+  it("agent_check_flags_a_vault_whose_bot_is_not_the_backstop_bot", () => {
+    const snap = snapshotFor(baseChain);
+    expect(verifyPolicy(snap, null, { agent: "agent.near" }).find((c) => c.id === "agent")!.state).toBe("pass");
+    expect(verifyPolicy(snap, null, { agent: "bot.backstop.near" }).find((c) => c.id === "agent")!.state).toBe("unknown");
+  });
   it("an unsupported chain id fails", () => {
     const check = constants(snapshotFor(baseChain, { chain_id: 1 }));
     expect(check.state).toBe("fail");

@@ -4,7 +4,7 @@ import { SUPPORTED_CHAIN_NAMES } from "@backstop/config/registry";
 import { Check, Loader2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { ChainSwitcher } from "@/components/app/chain-switcher";
-import { CreateVault } from "@/components/app/create-vault";
+import { CreateVault, creationOpen } from "@/components/app/create-vault";
 import { usePolicyContext } from "@/components/app/policy-context";
 import { DoneLine, StepCard } from "@/components/app/step-card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { resolveChain } from "@/lib/chain";
 import { NearRpcError } from "@/lib/near-rpc";
 import { BAD_VAULT_INPUT } from "@/lib/policy-param";
-import { PUBLIC_ENV } from "@/lib/public-env";
 import { prepareActivate } from "@/lib/review";
 import { isNearAccountId } from "@/lib/validate";
 import { ZodError } from "zod";
@@ -102,7 +101,7 @@ function ChainPicker() {
 function NoVault() {
   return (
     <div className="space-y-3">
-      {PUBLIC_ENV.factoryId ? (
+      {creationOpen() ? (
         <CreateVault />
       ) : (
         <Notice heading="Vault creation opens soon">You&apos;ll be able to open your Rescue vault right here. Check back shortly.</Notice>
@@ -146,10 +145,10 @@ function SetupChecklist({ rescueWalletReady, checksPassed, onFinish }: { rescueW
 
 /** What is wrong with (or still missing from) the selected vault. Renders nothing when it is ready. */
 function VaultStatus({ openAdvanced }: { openAdvanced: (item: string) => void }) {
-  const { policyId, query, snap, verified, activated, factoryLoading, forget, openReview } = usePolicyContext();
+  const { policyId, query, snap, verified, activated, requestsLoading, forget, openReview } = usePolicyContext();
 
   if (policyId === null) {
-    return factoryLoading ? <Looking /> : <NoVault />;
+    return requestsLoading ? <Looking /> : <NoVault />;
   }
   if (query.isError && !snap) {
     return (

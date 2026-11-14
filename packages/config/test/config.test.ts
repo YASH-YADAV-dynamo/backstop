@@ -75,8 +75,32 @@ describe("bot service env", () => {
     expect(loadEnv({ ALERT_WEBHOOK_URL: "https://hooks.example/x" }).ALERT_WEBHOOK_URL).toBe("https://hooks.example/x");
   });
 
+  it("policy_code_hash_is_64_hex_stored_lowercase_and_the_deployer_public_key_is_ed25519", () => {
+    const hash = "AB".repeat(32);
+    expect(loadEnv({ POLICY_CODE_HASH: hash }).POLICY_CODE_HASH).toBe("ab".repeat(32));
+    expect(() => loadEnv({ POLICY_CODE_HASH: "abc" })).toThrow(/POLICY_CODE_HASH/);
+    const pk = "ed25519:DcA2MzgpJbrUATQLLceocVckhhAqrkingax4oJ9kZ847";
+    expect(loadEnv({ NEXT_PUBLIC_VAULT_DEPLOYER_PK: pk }).NEXT_PUBLIC_VAULT_DEPLOYER_PK).toBe(pk);
+    expect(() => loadEnv({ NEXT_PUBLIC_VAULT_DEPLOYER_PK: "ed25519:short" })).toThrow(/NEXT_PUBLIC_VAULT_DEPLOYER_PK/);
+    expect(() => loadEnv({ VAULT_DEPLOYER_PRIVATE_KEY: "secp256k1:abc" })).toThrow(/VAULT_DEPLOYER_PRIVATE_KEY/);
+  });
+
   it("web_env_can_read_the_vault_status_file_location", () => {
     expect(loadWebEnv({ VAULT_STATUS_FILE: "/tmp/vs.json" }).VAULT_STATUS_FILE).toBe("/tmp/vs.json");
+  });
+});
+
+describe("VAULT_ALLOWED_OWNERS", () => {
+  it("allowlist_is_trimmed_lowercased_deduplicated_and_drops_empties", () => {
+    expect(loadWebEnv({ VAULT_ALLOWED_OWNERS: " Alice.near, bob.near ,,ALICE.near," }).VAULT_ALLOWED_OWNERS).toEqual(["alice.near", "bob.near"]);
+  });
+  it("unset_or_empty_means_no_allowlist_so_creation_stays_open", () => {
+    expect(loadWebEnv({}).VAULT_ALLOWED_OWNERS).toBeUndefined();
+    expect(loadWebEnv({ VAULT_ALLOWED_OWNERS: "" }).VAULT_ALLOWED_OWNERS).toBeUndefined();
+    expect(loadWebEnv({ VAULT_ALLOWED_OWNERS: " , " }).VAULT_ALLOWED_OWNERS).toBeUndefined();
+  });
+  it("an_invalid_entry_fails_loudly_and_names_it", () => {
+    expect(() => loadWebEnv({ VAULT_ALLOWED_OWNERS: "alice.near,not valid!" })).toThrow(/VAULT_ALLOWED_OWNERS.*not valid!/s);
   });
 });
 
@@ -86,6 +110,7 @@ describe("loadWebEnv", () => {
       POLICY_CONTRACT_ID: "policy.alice.near",
       AGENT_PRIVATE_KEY: "ed25519:secret",
       DEPLOYER_PRIVATE_KEY: "ed25519:secret",
+      VAULT_DEPLOYER_PRIVATE_KEY: "ed25519:secret",
     });
     expect(env.POLICY_CONTRACT_ID).toBe("policy.alice.near");
     expect(JSON.stringify(env)).not.toContain("secret");

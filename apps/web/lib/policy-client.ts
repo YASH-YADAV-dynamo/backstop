@@ -1,9 +1,10 @@
 /**
- * Typed reads of the policy / factory / USDC token / v1.signer contracts (zod on every response),
+ * Typed reads of the policy / USDC token / v1.signer contracts (zod on every response),
  * the C.14 verification checks, and builders for every NEAR wallet action.
  * Nothing here signs or sends anything.
  */
 import { FEE, NEAR, ONE_CLICK, POLICY, SUPPORTED_CHAIN_NAMES } from "@backstop/config/registry";
+import { CREATE_ACCOUNT_TGAS, NEAR_REGISTRAR } from "@backstop/config/vault-plan";
 import { getAddress, keccak256, type Address } from "viem";
 import { z } from "zod";
 import { accessKeyCount, viewAccount, viewFunction, type AccountInfo } from "@/lib/near-rpc";
@@ -122,21 +123,39 @@ export async function readPolicy(policyId: string): Promise<PolicySnapshot> {
 
 export type ExpectedCodeHash = { hex: string; source: "factory" | "configured" };
 
-/** The published policy code hash: the factory's answer if a factory is configured, else the env value. */
+/** The published policy code hash: NEXT_PUBLIC_POLICY_CODE_HASH, else (legacy) the configured factory's answer. */
 export async function readExpectedCodeHash(): Promise<ExpectedCodeHash | null> {
+  if (PUBLIC_ENV.policyCodeHash) return { hex: PUBLIC_ENV.policyCodeHash, source: "configured" };
   if (PUBLIC_ENV.factoryId) {
     const hex = await viewFunction(PUBLIC_ENV.factoryId, "policy_code_hash", {}, z.string().regex(/^[0-9a-fA-F]{64}$/));
     return { hex: hex.toLowerCase(), source: "factory" };
   }
-  return PUBLIC_ENV.policyCodeHash ? { hex: PUBLIC_ENV.policyCodeHash, source: "configured" } : null;
+  return null;
 }
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
+/** Who the app expects behind a vault: the connected account as owner, and the Backstop bot as agent. */
+export type ExpectedParties = { owner?: string | null; agent?: string | null };
+
 /** C.14 checks 1-3 plus the constants the agent also refuses to start without (D.3). */
-export function verifyPolicy(snap: PolicySnapshot, expected: ExpectedCodeHash | null): Check[] {
+export function verifyPolicy(snap: PolicySnapshot, expected: ExpectedCodeHash | null, parties: ExpectedParties = {}): Check[] {
   const c = snap.config;
   const checks: Check[] = [];
+  if (parties.owner) {
+    checks.push(
+      c.owner === parties.owner
+        ? { id: "owner", label: "Owner", state: "pass", detail: `${c.owner}, the account you are connected with, owns this vault.` }
+        : { id: "owner", label: "Owner", state: "fail", detail: `This vault's owner is ${c.owner}, not ${parties.owner}. Only its owner can withdraw from it or close it.` },
+    );
+  }
+  if (parties.agent) {
+    checks.push(
+      c.agent === parties.agent
+        ? { id: "agent", label: "Rescue bot", state: "pass", detail: `${c.agent} is the Backstop rescue bot.` }
+        : { id: "agent", label: "Rescue bot", state: "unknown", detail: `The rescue bot of this vault is ${c.agent}, not the Backstop bot ${parties.agent}: Backstop does not watch it.` },
+    );
+  }
   checks.push(
     snap.keyCount === 0
       ? { id: "keys", label: "No access keys", state: "pass", detail: "Nobody can sign as this account or bypass its limits." }
@@ -273,16 +292,14 @@ export const activateTx = (policyId: string): NearTx => ({
   calls: [{ methodName: "activate", args: {}, gasTgas: POLICY.gas.activate, depositYocto: "0" }],
 });
 
-/** K.2 `create_policy`: the owner is the signer; the factory takes no owner, agent or name argument. */
-export const createPolicyTx = (factoryId: string, chain: string, onBehalfOf: string, limits: LimitsJson, depositYocto: bigint): NearTx => ({
-  receiverId: factoryId,
-  calls: [{ methodName: "create_policy", args: { chain, on_behalf_of: onBehalfOf, limits }, gasTgas: POLICY.gas.createPolicy, depositYocto: depositYocto.toString() }],
-});
-
-/** K.2 `claim_refund`: pays the signer whatever a failed create could not return at once. */
-export const claimRefundTx = (factoryId: string): NearTx => ({
-  receiverId: factoryId,
-  calls: [{ methodName: "claim_refund", args: {}, gasTgas: 30, depositYocto: "0" }],
+/**
+ * Factory-less creation: the `near` registrar creates `vaultId` with the bot's deploy key as its only key and
+ * moves the attached deposit into it. If the name is taken, `create_account` refunds the deposit and returns
+ * false while the transaction still succeeds, so the caller must check the account afterwards.
+ */
+export const createAccountTx = (vaultId: string, deployerPublicKey: string, depositYocto: bigint): NearTx => ({
+  receiverId: NEAR_REGISTRAR,
+  calls: [{ methodName: "create_account", args: { new_account_id: vaultId, new_public_key: deployerPublicKey }, gasTgas: CREATE_ACCOUNT_TGAS, depositYocto: depositYocto.toString() }],
 });
 
 // ---- Error codes (C.x): the web maps the ERR_ prefix to a message and keeps the raw text -----
@@ -300,11 +317,6 @@ const ERROR_MESSAGES: Record<string, string> = {
   ERR_CLOSE_FAILED: "The policy could not read its USDC balance. Nothing changed; try again.",
   ERR_MAX_PER_RESCUE_ABOVE_DAILY_CAP: "Max per rescue cannot be above the daily cap.",
   ERR_TARGET_HF_NOT_ABOVE_TRIGGER: "The target health factor must be higher than the trigger.",
-  ERR_DEPOSIT_TOO_LOW: "The deposit was too low. Reload the page and try again.",
-  ERR_TOO_MANY_VAULTS: "You've reached the limit of 8 vaults. Close one to open another.",
-  ERR_CREATE_FAILED: "Your vault wasn't created and your NEAR was returned (or is waiting for you to claim).",
-  ERR_NO_REFUND: "There is no refund waiting for this account.",
-  ERR_UNKNOWN_CHAIN: "That chain isn't supported by the vault service.",
   ERR_EVM_ADDRESS_ZERO: "The loan address can't be the zero address.",
 };
 

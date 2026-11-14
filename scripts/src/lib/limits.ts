@@ -5,20 +5,10 @@
  * Pure: no network, no env.
  */
 import { formatUnits } from "viem";
+import type { LimitsJson } from "@backstop/core";
 
-/** `Limits` as the contract's JSON: U128 as decimal strings, u32 / u64 as numbers. */
-export interface LimitsJson {
-  trigger_hf_bps: number;
-  target_hf_bps: number;
-  /** USDC, 6 decimals */
-  max_per_rescue: string;
-  /** USDC, 6 decimals, per UTC day */
-  daily_cap: string;
-  cooldown_secs: number;
-  /** wei */
-  max_fee_per_gas: string;
-  max_gas_limit: string;
-}
+/** `Limits` as the contract's JSON (defined once in packages/core, next to the vault name commitment). */
+export type { LimitsJson };
 
 /** Option specs for node:util parseArgs (all strings; parsed by limitsFromFlags). */
 export const LIMIT_OPTIONS = {

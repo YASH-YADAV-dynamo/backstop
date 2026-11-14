@@ -15,6 +15,7 @@
     "contract:test": "cd contracts/policy && cargo test",
     "contract:build": "pnpm factory:build",
     "policy:build": "cd contracts/policy && cargo build --target wasm32-unknown-unknown --release && mkdir -p target/near && wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory --enable-sign-ext --enable-mutable-globals target/wasm32-unknown-unknown/release/backstop_policy.wasm -o target/near/backstop_policy.wasm && node ../../scripts/check-wasm.mjs target/near/backstop_policy.wasm",
+    "policy:build:wsl": "wsl -d Fedora -- bash scripts/wsl-build-policy.sh",
     "factory:build": "pnpm policy:build && cd contracts/factory && cargo build --target wasm32-unknown-unknown --release && mkdir -p target/near && wasm-opt -Oz --skip-pass=memory-packing --strip-debug --strip-producers --enable-bulk-memory --enable-sign-ext --enable-mutable-globals target/wasm32-unknown-unknown/release/backstop_factory.wasm -o target/near/backstop_factory.wasm && node ../../scripts/check-wasm.mjs target/near/backstop_factory.wasm --embeds=../policy/target/near/backstop_policy.wasm env.panic_utf8 env.sha256",
     "factory:test": "pnpm policy:build && cd contracts/factory && cargo test"
   },

@@ -1,7 +1,27 @@
 export { rescueRecordSchema, parseRecord, applyPatch, type RescuePatch, type RescueStore } from "./record.js";
 export { JsonFileStore } from "./json-store.js";
 export { PostgresStore } from "./pg-store.js";
-export { rescues, vaultStatus, type RescueRow, type VaultStatusRow } from "./schema.js";
+export { rescues, vaultStatus, vaultRequests, type RescueRow, type VaultStatusRow, type VaultRequestRow } from "./schema.js";
+export {
+  VAULT_REQUEST_STATUSES,
+  canTransition,
+  limitsJsonSchema,
+  newVaultRequestSchema,
+  vaultRequestSchema,
+  parseVaultRequest,
+  toRequestRow,
+  fromRequestRow,
+  VaultRequestConflictError,
+  JsonVaultRequestStore,
+  PostgresVaultRequestStore,
+  openVaultRequestStore,
+  type NewVaultRequest,
+  type VaultRequest,
+  type VaultRequestPatch,
+  type VaultRequestReader,
+  type VaultRequestStatus,
+  type VaultRequestStore,
+} from "./vault-requests.js";
 export { createTableSql } from "./ddl.js";
 export { openStore } from "./open.js";
 export {
